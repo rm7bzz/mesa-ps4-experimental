@@ -1036,10 +1036,20 @@ static void si_shader_gs_legacy(struct si_screen *sscreen, struct si_shader *sha
       ac_pm4_set_reg(&pm4->base, R_00B228_SPI_SHADER_PGM_RSRC1_GS, rsrc1);
       ac_pm4_set_reg(&pm4->base, R_00B22C_SPI_SHADER_PGM_RSRC2_GS, rsrc2);
 
-      shader->gs.spi_shader_pgm_rsrc3_gs =
-         ac_apply_cu_en(S_00B21C_CU_EN(0xffff) |
-                        S_00B21C_WAVE_LIMIT(0x3F),
-                        C_00B21C_CU_EN, 0, &sscreen->info);
+      if (sscreen->info.family == CHIP_LIVERPOOL || sscreen->info.family == CHIP_GLADIUS) {
+         unsigned gnm_cu_en = sscreen->info.family == CHIP_GLADIUS ? 0x1ff : 0xffff;
+         unsigned gnm_wave_limit = sscreen->info.family == CHIP_GLADIUS ? 0x17 : 0;
+
+         shader->gs.spi_shader_pgm_rsrc3_gs =
+            ac_apply_cu_en(S_00B21C_CU_EN(gnm_cu_en) |
+                           S_00B21C_WAVE_LIMIT(gnm_wave_limit),
+                           C_00B21C_CU_EN, 0, &sscreen->info);
+      } else {
+         shader->gs.spi_shader_pgm_rsrc3_gs =
+            ac_apply_cu_en(S_00B21C_CU_EN(0xffff) |
+                           S_00B21C_WAVE_LIMIT(0x3F),
+                           C_00B21C_CU_EN, 0, &sscreen->info);
+      }
       shader->gs.spi_shader_pgm_rsrc4_gs =
          ac_apply_cu_en(S_00B204_CU_EN_GFX10(0xffff) |
                         S_00B204_SPI_SHADER_LATE_ALLOC_GS_GFX10(0),
@@ -1058,10 +1068,20 @@ static void si_shader_gs_legacy(struct si_screen *sscreen, struct si_shader *sha
 
       polaris_set_vgt_vertex_reuse(sscreen, shader->key.ge.part.gs.es, shader);
    } else {
-      shader->gs.spi_shader_pgm_rsrc3_gs =
-         ac_apply_cu_en(S_00B21C_CU_EN(0xffff) |
-                        S_00B21C_WAVE_LIMIT(0x3F),
-                        C_00B21C_CU_EN, 0, &sscreen->info);
+      if (sscreen->info.family == CHIP_LIVERPOOL || sscreen->info.family == CHIP_GLADIUS) {
+         unsigned gnm_cu_en = sscreen->info.family == CHIP_GLADIUS ? 0x1ff : 0xffff;
+         unsigned gnm_wave_limit = sscreen->info.family == CHIP_GLADIUS ? 0x17 : 0;
+
+         shader->gs.spi_shader_pgm_rsrc3_gs =
+            ac_apply_cu_en(S_00B21C_CU_EN(gnm_cu_en) |
+                           S_00B21C_WAVE_LIMIT(gnm_wave_limit),
+                           C_00B21C_CU_EN, 0, &sscreen->info);
+      } else {
+         shader->gs.spi_shader_pgm_rsrc3_gs =
+            ac_apply_cu_en(S_00B21C_CU_EN(0xffff) |
+                           S_00B21C_WAVE_LIMIT(0x3F),
+                           C_00B21C_CU_EN, 0, &sscreen->info);
+      }
 
       ac_pm4_set_reg(&pm4->base, R_00B220_SPI_SHADER_PGM_LO_GS, va >> 8);
       ac_pm4_set_reg(&pm4->base, R_00B224_SPI_SHADER_PGM_HI_GS,
@@ -1930,11 +1950,25 @@ static void si_shader_vs_legacy(struct si_screen *sscreen, struct si_shader *sha
    oc_lds_en = shader->selector->stage == MESA_SHADER_TESS_EVAL ? 1 : 0;
 
    if (sscreen->info.gfx_level >= GFX7) {
-      ac_pm4_set_reg_idx3(&pm4->base, R_00B118_SPI_SHADER_PGM_RSRC3_VS,
-                          ac_apply_cu_en(S_00B118_CU_EN(cu_mask) |
-                                         S_00B118_WAVE_LIMIT(0x3F),
-                                         C_00B118_CU_EN, 0, &sscreen->info));
-      ac_pm4_set_reg(&pm4->base, R_00B11C_SPI_SHADER_LATE_ALLOC_VS, S_00B11C_LIMIT(late_alloc_wave64));
+      if (sscreen->info.family == CHIP_LIVERPOOL || sscreen->info.family == CHIP_GLADIUS) {
+         unsigned gnm_cu_en = sscreen->info.family == CHIP_GLADIUS ? 0x1fd : 0xffff;
+         unsigned gnm_wave_limit = sscreen->info.family == CHIP_GLADIUS ? 0x17 : 0;
+         unsigned gnm_late_alloc = sscreen->info.family == CHIP_GLADIUS ? 0x1c : 0;
+
+         ac_pm4_set_reg(&pm4->base, R_00B118_SPI_SHADER_PGM_RSRC3_VS,
+                        ac_apply_cu_en(S_00B118_CU_EN(gnm_cu_en) |
+                                       S_00B118_WAVE_LIMIT(gnm_wave_limit),
+                                       C_00B118_CU_EN, 0, &sscreen->info));
+         ac_pm4_set_reg(&pm4->base, R_00B11C_SPI_SHADER_LATE_ALLOC_VS,
+                        S_00B11C_LIMIT(gnm_late_alloc));
+      } else {
+         ac_pm4_set_reg_idx3(&pm4->base, R_00B118_SPI_SHADER_PGM_RSRC3_VS,
+                             ac_apply_cu_en(S_00B118_CU_EN(cu_mask) |
+                                            S_00B118_WAVE_LIMIT(0x3F),
+                                            C_00B118_CU_EN, 0, &sscreen->info));
+         ac_pm4_set_reg(&pm4->base, R_00B11C_SPI_SHADER_LATE_ALLOC_VS,
+                        S_00B11C_LIMIT(late_alloc_wave64));
+      }
    }
 
    ac_pm4_set_reg(&pm4->base, R_00B120_SPI_SHADER_PGM_LO_VS, va >> 8);
@@ -4101,6 +4135,30 @@ bool si_update_gs_ring_buffers(struct si_context *sctx)
    esgs_ring_size = CLAMP(esgs_ring_size, min_esgs_ring_size, max_size);
    gsvs_ring_size = MIN2(gsvs_ring_size, max_size);
 
+   if (sctx->family == CHIP_GLADIUS) {
+      /*
+       * Neo GNM's GS-ring entry accepts only 4-8 MiB in exact 1 MiB
+       * increments.  Keep Mesa's workload-based choice inside that proven
+       * Gladius contract.
+       */
+      const unsigned one_mb = 1024 * 1024;
+
+      esgs_ring_size = CLAMP(align(esgs_ring_size, one_mb), 4 * one_mb, 8 * one_mb);
+      if (gsvs_ring_size)
+         gsvs_ring_size = CLAMP(align(gsvs_ring_size, one_mb), 4 * one_mb, 8 * one_mb);
+   } else if (sctx->family == CHIP_LIVERPOOL) {
+      /*
+       * Orbis initializes both Liverpool GS rings to 4 MiB.  The recovered
+       * base image does not prove Neo's upper bound for Liverpool, so retain
+       * Mesa's larger workload-derived sizes while enforcing that baseline.
+       */
+      const unsigned default_size = 4 * 1024 * 1024;
+
+      esgs_ring_size = MAX2(esgs_ring_size, default_size);
+      if (gsvs_ring_size)
+         gsvs_ring_size = MAX2(gsvs_ring_size, default_size);
+   }
+
    /* Some rings don't have to be allocated if shaders don't use them.
     * (e.g. no varyings between ES and GS or GS and VS)
     *
@@ -4796,7 +4854,10 @@ static void gfx6_emit_tess_io_layout_state(struct si_context *sctx, unsigned ind
    radeon_end();
 
    radeon_begin_again(cs);
-   if (sctx->gfx_level >= GFX7) {
+   if (sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS) {
+      radeon_opt_set_context_reg(R_028B58_VGT_LS_HS_CONFIG,
+                                 AC_TRACKED_VGT_LS_HS_CONFIG, sctx->ls_hs_config);
+   } else if (sctx->gfx_level >= GFX7) {
       radeon_opt_set_context_reg_idx(R_028B58_VGT_LS_HS_CONFIG,
                                      AC_TRACKED_VGT_LS_HS_CONFIG, 2, sctx->ls_hs_config);
    } else {

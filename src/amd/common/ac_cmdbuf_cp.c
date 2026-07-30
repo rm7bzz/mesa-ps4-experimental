@@ -344,6 +344,7 @@ ac_emit_cp_tess_rings(struct ac_cmdbuf *cs, const struct radeon_info *info,
                       uint64_t attr_ring_va)
 {
    const uint64_t va = attr_ring_va + info->tess_offchip_ring_size;
+   const bool ps4 = info->family == CHIP_LIVERPOOL || info->family == CHIP_GLADIUS;
    uint32_t tf_ring_size = info->tess_factor_ring_size / 4;
 
    if (info->gfx_level >= GFX11) {
@@ -351,13 +352,21 @@ ac_emit_cp_tess_rings(struct ac_cmdbuf *cs, const struct radeon_info *info,
       tf_ring_size /= info->max_se;
    }
 
-   assert((tf_ring_size & C_030938_SIZE) == 0);
+   assert(ps4 || (tf_ring_size & C_030938_SIZE) == 0);
 
    ac_cmdbuf_begin(cs);
 
    if (info->gfx_level >= GFX7) {
-      ac_cmdbuf_set_ucfg_reg_seq(R_030938_VGT_TF_RING_SIZE, 3);
-      ac_cmdbuf_emit(S_030938_SIZE(tf_ring_size));
+      /* PS4 uses the legacy privileged selector 0x2262 for TF_RING_SIZE.
+       * Its kernel restores Sony's fixed 0x8000 value after RLC resume.
+       * Do not overwrite it through the generic GFX7 UCONFIG alias; only
+       * update the dynamic off-chip parameters and memory base here.
+       */
+      ac_cmdbuf_set_ucfg_reg_seq(ps4 ? R_03093C_VGT_HS_OFFCHIP_PARAM :
+                                      R_030938_VGT_TF_RING_SIZE,
+                                ps4 ? 2 : 3);
+      if (!ps4)
+         ac_cmdbuf_emit(S_030938_SIZE(tf_ring_size));
       ac_cmdbuf_emit(info->hs_offchip_param);
       ac_cmdbuf_emit(va >> 8);
 
@@ -401,10 +410,11 @@ ac_emit_cp_gfx_scratch(struct ac_cmdbuf *cs, enum amd_gfx_level gfx_level,
 void
 ac_emit_cp_acquire_mem(struct ac_cmdbuf *cs, enum amd_gfx_level gfx_level,
                        enum amd_ip_type ip_type, uint32_t engine,
-                       uint32_t gcr_cntl)
+                       uint32_t gcr_cntl, bool gfx7_use_acquire_mem)
 {
    assert(ip_type != AMD_IP_GFX || (engine == V_581B_CP_PFP || engine == V_581B_CP_ME));
    assert(gcr_cntl);
+   assert(!gfx7_use_acquire_mem || (gfx_level == GFX7 && ip_type == AMD_IP_GFX));
 
    ac_cmdbuf_begin(cs);
 
@@ -427,12 +437,13 @@ ac_emit_cp_acquire_mem(struct ac_cmdbuf *cs, enum amd_gfx_level gfx_level,
    } else {
       const bool is_mec = gfx_level >= GFX7 && ip_type == AMD_IP_COMPUTE;
 
-      if (gfx_level == GFX9 || is_mec) {
+      if (gfx_level == GFX9 || is_mec || gfx7_use_acquire_mem) {
          /* Flush caches and wait for the caches to assert idle. */
          ac_cmdbuf_emit(PKT3(PKT3_ACQUIRE_MEM, 5, 0) | PKT3_SHADER_TYPE_S(is_mec));
          ac_cmdbuf_emit(gcr_cntl);      /* CP_COHER_CNTL */
-         ac_cmdbuf_emit(0xffffffff);    /* CP_COHER_SIZE */
-         ac_cmdbuf_emit(0x000000ff);    /* CP_COHER_SIZE_HI */
+         /* GNM uses the zero-size encoding for a full-range Liverpool wait. */
+         ac_cmdbuf_emit(gfx7_use_acquire_mem ? 0 : 0xffffffff); /* CP_COHER_SIZE */
+         ac_cmdbuf_emit(gfx7_use_acquire_mem ? 0 : 0x000000ff); /* CP_COHER_SIZE_HI */
          ac_cmdbuf_emit(0);             /* CP_COHER_BASE */
          ac_cmdbuf_emit(0);             /* CP_COHER_BASE_HI */
          ac_cmdbuf_emit(0x0000000A);    /* POLL_INTERVAL */

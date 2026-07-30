@@ -1099,7 +1099,8 @@ radv_update_preamble_cs(struct radv_queue_state *queue, struct radv_device *devi
                flush_bits |= RADV_CMD_FLAG_PS_PARTIAL_FLUSH;
          }
 
-         radv_cs_emit_cache_flush(ws, cs, gfx_level, NULL, 0, flush_bits, &sqtt_flush_bits, 0);
+         radv_cs_emit_cache_flush(ws, cs, gfx_level, pdev->info.family, NULL, 0, flush_bits,
+                                  &sqtt_flush_bits, 0);
       }
 
       result = radv_finalize_cmd_stream(device, cs);
@@ -1315,7 +1316,8 @@ radv_create_flush_postamble(struct radv_queue *queue)
    }
 
    enum rgp_flush_bits sqtt_flush_bits = 0;
-   radv_cs_emit_cache_flush(ws, cs, gfx_level, NULL, 0, flush_bits, &sqtt_flush_bits, 0);
+   radv_cs_emit_cache_flush(ws, cs, gfx_level, pdev->info.family, NULL, 0, flush_bits,
+                            &sqtt_flush_bits, 0);
 
    result = radv_finalize_cmd_stream(device, cs);
    if (result != VK_SUCCESS) {

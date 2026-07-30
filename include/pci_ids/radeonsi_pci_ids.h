@@ -88,6 +88,8 @@ CHIPSET(0x665C, BONAIRE)
 CHIPSET(0x665D, BONAIRE)
 CHIPSET(0x665F, BONAIRE)
 
+/* Orbis directly identifies 0x9922/0x9923/0x9924. Keep 0x9920 from the
+ * established legacy PS4 device mapping; it is not proven by that comparator. */
 CHIPSET(0x9920, LIVERPOOL)
 CHIPSET(0x9922, LIVERPOOL)
 CHIPSET(0x9923, LIVERPOOL)

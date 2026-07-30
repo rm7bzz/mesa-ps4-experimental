@@ -86,8 +86,10 @@ bool
 radv_sparse_enabled(const struct radv_physical_device *pdev)
 {
    const struct radv_instance *instance = radv_physical_device_instance(pdev);
+   const bool is_ps4 = pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS;
 
-   return pdev->info.has_sparse || (instance->experimental_flags & RADV_EXPERIMENTAL_SPARSE);
+   return pdev->info.has_sparse ||
+          (is_ps4 && (instance->experimental_flags & RADV_EXPERIMENTAL_SPARSE));
 }
 
 bool
@@ -766,7 +768,9 @@ radv_physical_device_get_supported_extensions(const struct radv_physical_device 
       .EXT_descriptor_indexing = true,
       .EXT_device_address_binding_report = true,
       .EXT_device_fault = pdev->info.has_gpuvm_fault_query,
-      .EXT_device_generated_commands = true, /* Liverpool: GFX7 supports all needed PM4 packets */
+      .EXT_device_generated_commands =
+         pdev->info.gfx_level >= GFX8 || pdev->info.family == CHIP_LIVERPOOL ||
+         pdev->info.family == CHIP_GLADIUS,
       .EXT_device_memory_report = true,
       .EXT_discard_rectangles = true,
 #ifdef VK_USE_PLATFORM_DISPLAY_KHR
@@ -1779,11 +1783,15 @@ radv_get_physical_device_properties(struct radv_physical_device *pdev)
       .pointSizeGranularity = (1.0 / 8.0),
       .lineWidthGranularity = (1.0 / 8.0),
       .strictLines = false, /* FINISHME */
-      .standardSampleLocations = true,
+      .standardSampleLocations =
+         pdev->info.family != CHIP_LIVERPOOL && pdev->info.family != CHIP_GLADIUS,
       .optimalBufferCopyOffsetAlignment = 1,
       .optimalBufferCopyRowPitchAlignment = 1,
       .nonCoherentAtomSize = 64,
-      .sparseResidencyNonResidentStrict = enable_sparse,
+      /* The PS4 fallback aliases holes to a zero-filled BO. It preserves
+       * zero-backed reads but cannot implement native PRT write-discard
+       * semantics, so don't advertise the stricter guarantee there. */
+      .sparseResidencyNonResidentStrict = enable_sparse && pdev->info.has_sparse,
       .sparseResidencyAlignedMipSize = enable_sparse && !pdev->info.has_sparse_unaligned_mip_size,
       .sparseResidencyStandard2DBlockShape = enable_sparse,
       .sparseResidencyStandard3DBlockShape = enable_sparse && pdev->info.has_sparse_image_standard_3d,
@@ -2433,7 +2441,9 @@ radv_physical_device_try_create(struct radv_instance *instance, drmDevicePtr drm
    }
 
    if (drm_device) {
-      result = radv_amdgpu_winsys_create(fd, instance->debug_flags, instance->perftest_flags, is_virtio, &pdev->ws);
+      result = radv_amdgpu_winsys_create(fd, instance->debug_flags, instance->perftest_flags,
+                                         instance->experimental_flags & RADV_EXPERIMENTAL_SPARSE,
+                                         is_virtio, &pdev->ws);
 
       if (result != VK_SUCCESS) {
          result = vk_errorf(instance, result, "failed to initialize winsys");

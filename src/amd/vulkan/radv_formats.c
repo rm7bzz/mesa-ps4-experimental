@@ -1401,12 +1401,12 @@ fill_sparse_image_format_properties(struct radv_physical_device *pdev, VkImageTy
          h = (1u << ((l2_size + 1) / 3)) * vk_format_get_blockheight(format);
          d = (1u << ((l2_size + 0) / 3));
       } else {
-         /* GFX7/GFX8: addrlib uses thin tiling for 3D PRT surfaces
-          * (depthAlign=1), not thick tiles.  Use the same 2D formula. */
-         unsigned l2_size = 16 - util_logbase2(vk_format_get_blocksize(format));
+         /* GFX7/GFX8 thick tiling modes */
+         unsigned bs = vk_format_get_blocksize(format);
+         unsigned l2_size = 16 - util_logbase2(bs) - (bs <= 4 ? 2 : 0);
          w = (1u << ((l2_size + 1) / 2)) * vk_format_get_blockwidth(format);
          h = (1u << (l2_size / 2)) * vk_format_get_blockheight(format);
-         d = 1;
+         d = bs <= 4 ? 4 : 1;
       }
    } else {
       /* This assumes the sparse image tile size is always 64 KiB (1 << 16) */

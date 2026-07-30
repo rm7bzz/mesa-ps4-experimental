@@ -683,6 +683,32 @@ radv_get_esgs_gsvs_ring_size(const struct radv_device *device, struct radv_shade
       regs->gs.esgs_ring_size = CLAMP(esgs_ring_size, min_esgs_ring_size, max_size);
 
    regs->gs.gsvs_ring_size = MIN2(gsvs_ring_size, max_size);
+
+   if (pdev->info.family == CHIP_GLADIUS) {
+      /*
+       * Neo GNM's GS-ring entry accepts only 4-8 MiB in exact 1 MiB
+       * increments.  Keep Mesa's workload-based choice inside that proven
+       * Gladius contract.
+       */
+      const unsigned one_mb = 1024 * 1024;
+
+      regs->gs.esgs_ring_size =
+         CLAMP(align(regs->gs.esgs_ring_size, one_mb), 4 * one_mb, 8 * one_mb);
+      if (regs->gs.gsvs_ring_size)
+         regs->gs.gsvs_ring_size =
+            CLAMP(align(regs->gs.gsvs_ring_size, one_mb), 4 * one_mb, 8 * one_mb);
+   } else if (pdev->info.family == CHIP_LIVERPOOL) {
+      /*
+       * Orbis initializes both Liverpool GS rings to 4 MiB.  The recovered
+       * base image does not prove Neo's upper bound for Liverpool, so retain
+       * Mesa's larger workload-derived sizes while enforcing that baseline.
+       */
+      const unsigned default_size = 4 * 1024 * 1024;
+
+      regs->gs.esgs_ring_size = MAX2(regs->gs.esgs_ring_size, default_size);
+      if (regs->gs.gsvs_ring_size)
+         regs->gs.gsvs_ring_size = MAX2(regs->gs.gsvs_ring_size, default_size);
+   }
 }
 
 void

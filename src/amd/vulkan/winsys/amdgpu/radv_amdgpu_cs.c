@@ -789,10 +789,16 @@ radv_amdgpu_cs_chain_dgc_ib(struct ac_cmdbuf *_cs, uint64_t va, uint32_t cdw, ui
       uint64_t *ib_va_ptr = (uint64_t *)(cs->base.buf + cs->base.cdw - 3);
       uint32_t *ib_size_ptr = cs->base.buf + cs->base.cdw - 1;
 
-      /* Writeback L2 because CP isn't coherent with L2 on GFX6-8. */
-      if (cs->ws->info.gfx_level <= GFX8) {
-         ac_emit_cp_acquire_mem(&cs->base, cs->ws->info.gfx_level, AMD_IP_COMPUTE, V_581B_CP_ME,
-                                S_0301F0_TC_WB_ACTION_ENA(1) | S_0301F0_TC_NC_ACTION_ENA(1));
+      /* CP isn't coherent with L2 on GFX6-8. GFX8 can write back L2 without
+       * invalidating it, but GFX7 has no standalone writeback operation and
+       * must use the complete TC/TCL1 invalidation path instead.
+       */
+      if (cs->ws->info.gfx_level == GFX8) {
+         ac_emit_cp_acquire_mem(&cs->base, GFX8, AMD_IP_COMPUTE, V_581B_CP_ME,
+                                S_0301F0_TC_WB_ACTION_ENA(1) | S_0301F0_TC_NC_ACTION_ENA(1), false);
+      } else if (cs->ws->info.gfx_level == GFX7) {
+         ac_emit_cp_acquire_mem(&cs->base, GFX7, AMD_IP_COMPUTE, V_581B_CP_ME,
+                                S_0085F0_TC_ACTION_ENA(1) | S_0085F0_TCL1_ACTION_ENA(1), false);
       }
 
       /* Finalize the current CS. */

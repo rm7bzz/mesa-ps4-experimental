@@ -2691,6 +2691,8 @@ static void gfx6_emit_framebuffer_state(struct si_context *sctx, unsigned index)
 {
    struct radeon_cmdbuf *cs = &sctx->gfx_cs;
    struct pipe_framebuffer_state *state = &sctx->framebuffer.state;
+   const bool is_ps4 =
+      sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS;
    unsigned i, nr_cbufs = state->nr_cbufs;
 
    radeon_begin(cs);
@@ -2821,24 +2823,50 @@ static void gfx6_emit_framebuffer_state(struct si_context *sctx, unsigned index)
          radeon_set_context_reg(R_0287A0_CB_MRT0_EPITCH + i * 4, cb_surf.cb_mrt_epitch);
       } else {
          /* GFX6-8 */
-         radeon_set_context_reg_seq(R_028C60_CB_COLOR0_BASE + i * 0x3C,
-                                    sctx->gfx_level >= GFX8 ? 14 : 13);
-         radeon_emit(cb_surf.cb_color_base);                              /* CB_COLOR0_BASE */
-         radeon_emit(cb_surf.cb_color_pitch);                             /* CB_COLOR0_PITCH */
-         radeon_emit(cb_surf.cb_color_slice);                             /* CB_COLOR0_SLICE */
-         radeon_emit(cb_surf.cb_color_view);                          /* CB_COLOR0_VIEW */
-         radeon_emit(cb_surf.cb_color_info);                              /* CB_COLOR0_INFO */
-         radeon_emit(cb_surf.cb_color_attrib);                            /* CB_COLOR0_ATTRIB */
-         radeon_emit(cb_surf.cb_dcc_control);                         /* CB_COLOR0_DCC_CONTROL */
-         radeon_emit(cb_surf.cb_color_cmask);                             /* CB_COLOR0_CMASK */
-         radeon_emit(tex->surface.u.legacy.color.cmask_slice_tile_max); /* CB_COLOR0_CMASK_SLICE */
-         radeon_emit(cb_surf.cb_color_fmask);                             /* CB_COLOR0_FMASK */
-         radeon_emit(cb_surf.cb_color_fmask_slice);                       /* CB_COLOR0_FMASK_SLICE */
-         radeon_emit(tex->color_clear_value[0]);                  /* CB_COLOR0_CLEAR_WORD0 */
-         radeon_emit(tex->color_clear_value[1]);                  /* CB_COLOR0_CLEAR_WORD1 */
+         if (is_ps4) {
+            /*
+             * GNM splits the Liverpool/Gladius color-target descriptor
+             * around the nonexistent GFX7 DCC_CONTROL slot.  Do not write
+             * selector 0x31e as part of a contiguous context-register
+             * sequence.
+             */
+            radeon_set_context_reg_seq(R_028C60_CB_COLOR0_BASE + i * 0x3C, 6);
+            radeon_emit(cb_surf.cb_color_base);                          /* CB_COLOR0_BASE */
+            radeon_emit(cb_surf.cb_color_pitch);                         /* CB_COLOR0_PITCH */
+            radeon_emit(cb_surf.cb_color_slice);                         /* CB_COLOR0_SLICE */
+            radeon_emit(cb_surf.cb_color_view);                          /* CB_COLOR0_VIEW */
+            radeon_emit(cb_surf.cb_color_info);                          /* CB_COLOR0_INFO */
+            radeon_emit(cb_surf.cb_color_attrib);                        /* CB_COLOR0_ATTRIB */
 
-         if (sctx->gfx_level >= GFX8) /* R_028C94_CB_COLOR0_DCC_BASE */
-            radeon_emit(cb_surf.cb_dcc_base);
+            radeon_set_context_reg_seq(R_028C7C_CB_COLOR0_CMASK + i * 0x3C, 4);
+            radeon_emit(cb_surf.cb_color_cmask);                         /* CB_COLOR0_CMASK */
+            radeon_emit(tex->surface.u.legacy.color.cmask_slice_tile_max); /* CB_COLOR0_CMASK_SLICE */
+            radeon_emit(cb_surf.cb_color_fmask);                         /* CB_COLOR0_FMASK */
+            radeon_emit(cb_surf.cb_color_fmask_slice);                   /* CB_COLOR0_FMASK_SLICE */
+
+            radeon_set_context_reg_seq(R_028C8C_CB_COLOR0_CLEAR_WORD0 + i * 0x3C, 2);
+            radeon_emit(tex->color_clear_value[0]);                      /* CB_COLOR0_CLEAR_WORD0 */
+            radeon_emit(tex->color_clear_value[1]);                      /* CB_COLOR0_CLEAR_WORD1 */
+         } else {
+            radeon_set_context_reg_seq(R_028C60_CB_COLOR0_BASE + i * 0x3C,
+                                       sctx->gfx_level >= GFX8 ? 14 : 13);
+            radeon_emit(cb_surf.cb_color_base);                           /* CB_COLOR0_BASE */
+            radeon_emit(cb_surf.cb_color_pitch);                          /* CB_COLOR0_PITCH */
+            radeon_emit(cb_surf.cb_color_slice);                          /* CB_COLOR0_SLICE */
+            radeon_emit(cb_surf.cb_color_view);                           /* CB_COLOR0_VIEW */
+            radeon_emit(cb_surf.cb_color_info);                           /* CB_COLOR0_INFO */
+            radeon_emit(cb_surf.cb_color_attrib);                         /* CB_COLOR0_ATTRIB */
+            radeon_emit(cb_surf.cb_dcc_control);                          /* CB_COLOR0_DCC_CONTROL */
+            radeon_emit(cb_surf.cb_color_cmask);                          /* CB_COLOR0_CMASK */
+            radeon_emit(tex->surface.u.legacy.color.cmask_slice_tile_max); /* CB_COLOR0_CMASK_SLICE */
+            radeon_emit(cb_surf.cb_color_fmask);                          /* CB_COLOR0_FMASK */
+            radeon_emit(cb_surf.cb_color_fmask_slice);                    /* CB_COLOR0_FMASK_SLICE */
+            radeon_emit(tex->color_clear_value[0]);                       /* CB_COLOR0_CLEAR_WORD0 */
+            radeon_emit(tex->color_clear_value[1]);                       /* CB_COLOR0_CLEAR_WORD1 */
+
+            if (sctx->gfx_level >= GFX8) /* R_028C94_CB_COLOR0_DCC_BASE */
+               radeon_emit(cb_surf.cb_dcc_base);
+         }
       }
    }
    for (; i < 8; i++)
@@ -3310,6 +3338,15 @@ static void si_emit_msaa_config(struct si_context *sctx, unsigned index)
       S_028A4C_SUPERTILE_WALK_ORDER_ENABLE(1) |
       S_028A4C_TILE_WALK_ORDER_ENABLE(1) | S_028A4C_MULTI_SHADER_ENGINE_PRIM_DISCARD_ENABLE(1) |
       S_028A4C_FORCE_EOV_CNTDWN_ENABLE(1) | S_028A4C_FORCE_EOV_REZ_ENABLE(1);
+   if (sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS) {
+      /* Liverpool GNM uses zero; Neo uses 0x06020000.  Sony's recovered
+       * updater only adds PS_ITER_SAMPLE. */
+      sc_mode_cntl_1 = sctx->family == CHIP_GLADIUS
+                          ? S_028A4C_MULTI_SHADER_ENGINE_PRIM_DISCARD_ENABLE(1) |
+                               S_028A4C_FORCE_EOV_CNTDWN_ENABLE(1) |
+                               S_028A4C_FORCE_EOV_REZ_ENABLE(1)
+                          : 0;
+   }
    unsigned db_eqaa = S_028804_HIGH_QUALITY_INTERSECTIONS(1) |
                       S_028804_INCOHERENT_EQAA_READS(sctx->gfx_level < GFX12) |
                       S_028804_STATIC_ANCHOR_ASSOCIATIONS(1);
@@ -4164,6 +4201,10 @@ static void *si_create_sampler_state(struct pipe_context *ctx,
       .mag_filter = si_tex_filter(state->mag_img_filter, max_aniso),
       .min_filter = si_tex_filter(state->min_img_filter, max_aniso),
       .mip_filter = si_tex_mipfilter(state->min_mip_filter),
+      /* GNM leaves PERF_MIP at zero unless the application sets it explicitly. */
+      .perf_mip = sscreen->info.family == CHIP_LIVERPOOL || sscreen->info.family == CHIP_GLADIUS
+                     ? 0
+                     : (max_aniso_ratio ? max_aniso_ratio + 6 : 0),
       .min_lod = state->min_lod,
       .max_lod = state->max_lod,
       .lod_bias = state->lod_bias,
@@ -4171,7 +4212,7 @@ static void *si_create_sampler_state(struct pipe_context *ctx,
       .border_color_ptr = border_color_ptr,
    };
 
-   ac_build_sampler_descriptor(sscreen->info.gfx_level, &ac_state, rstate->val);
+   ac_build_sampler_descriptor(&sscreen->info, &ac_state, rstate->val);
 
    /* Create sampler resource for upgraded depth textures. */
    memcpy(rstate->upgraded_depth_val, rstate->val, sizeof(rstate->val));

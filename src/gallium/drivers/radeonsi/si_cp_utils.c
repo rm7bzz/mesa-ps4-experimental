@@ -44,7 +44,7 @@ void si_cp_acquire_mem(struct si_context *sctx, struct radeon_cmdbuf *cs, unsign
 
    if (sctx->gfx_level >= GFX10) {
       ac_emit_cp_acquire_mem(&cs->current, sctx->gfx_level, ip_type, engine,
-                             gcr_cntl);
+                             gcr_cntl, false);
    } else {
       bool compute_ib = !sctx->is_gfx_queue;
 
@@ -53,7 +53,9 @@ void si_cp_acquire_mem(struct si_context *sctx, struct radeon_cmdbuf *cs, unsign
          gcr_cntl |= 1u << 31; /* don't sync PFP, i.e. execute the sync in ME */
 
       ac_emit_cp_acquire_mem(&cs->current, sctx->gfx_level, ip_type, engine,
-                             gcr_cntl);
+                             gcr_cntl,
+                             sctx->is_gfx_queue &&
+                                (sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS));
 
       /* ACQUIRE_MEM & SURFACE_SYNC roll the context if the current context is busy. */
       if (!compute_ib)

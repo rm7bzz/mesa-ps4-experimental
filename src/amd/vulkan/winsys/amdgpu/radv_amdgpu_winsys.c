@@ -20,6 +20,7 @@
 #include "radv_amdgpu_cs.h"
 #include "radv_amdgpu_winsys_public.h"
 #include "radv_debug.h"
+#include "util/u_math.h"
 #include "vk_drm_syncobj.h"
 #include "xf86drm.h"
 
@@ -196,13 +197,12 @@ static uint64_t
 radv_amdgpu_winsys_filter_perftest_flags(uint64_t perftest_flags)
 {
    return perftest_flags &
-          (RADV_PERFTEST_NO_GTT_SPILL | RADV_PERFTEST_LOCAL_BOS | RADV_PERFTEST_NO_SAM | RADV_PERFTEST_SAM |
-           RADV_PERFTEST_SPARSE);
+          (RADV_PERFTEST_NO_GTT_SPILL | RADV_PERFTEST_LOCAL_BOS | RADV_PERFTEST_NO_SAM | RADV_PERFTEST_SAM);
 }
 
 VkResult
-radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags, bool is_virtio,
-                          struct radeon_winsys **winsys)
+radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
+                          bool emulate_sparse, bool is_virtio, struct radeon_winsys **winsys)
 {
    VkResult result = VK_SUCCESS;
 
@@ -241,6 +241,10 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
    }
 
    if (ws) {
+      const bool effective_emulate_sparse =
+         emulate_sparse &&
+         (ws->info.family == CHIP_LIVERPOOL || ws->info.family == CHIP_GLADIUS);
+
       simple_mtx_unlock(&winsys_creation_mutex);
       ac_drm_device_deinitialize(dev);
 
@@ -248,7 +252,9 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
       if (((debug_flags & RADV_DEBUG_ALL_BOS) && !ws->debug_all_bos) ||
           ((debug_flags & RADV_DEBUG_HANG) && !ws->debug_log_bos) ||
           ((debug_flags & RADV_DEBUG_NO_IB_CHAINING) && ws->chain_ib) ||
-          ((debug_flags & RADV_DEBUG_VM) && !ws->debug_vm) || (perftest_flags != ws->perftest)) {
+          ((debug_flags & RADV_DEBUG_VM) && !ws->debug_vm) ||
+          (perftest_flags != ws->perftest) ||
+          (effective_emulate_sparse != ws->emulate_sparse)) {
          fprintf(stderr, "radv/amdgpu: Found options that differ from the existing winsys.\n");
          return VK_ERROR_INITIALIZATION_FAILED;
       }
@@ -278,6 +284,41 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
    if (info_result != AC_QUERY_GPU_INFO_SUCCESS) {
       result = info_result == AC_QUERY_GPU_INFO_FAIL ? VK_ERROR_INITIALIZATION_FAILED : VK_ERROR_INCOMPATIBLE_DRIVER;
       goto winsys_fail;
+   }
+   ws->emulate_sparse =
+      emulate_sparse &&
+      (ws->info.family == CHIP_LIVERPOOL || ws->info.family == CHIP_GLADIUS);
+
+   /* GFX7 native PRT remains disabled by Mesa because it hangs in sparse CTS
+    * workloads. Preserve COOLV5's zero-backed sparse emulation for explicit
+    * RADV_EXPERIMENTAL=sparse use on Liverpool and Gladius.
+    *
+    * Allocate this before initializing the rest of the winsys so a failure
+    * cannot leave sparse support advertised without a valid backing BO. Use
+    * the PTE fragment size to avoid issuing one VM ioctl per host page. */
+   if (!ws->info.has_sparse && ws->emulate_sparse) {
+      const uint64_t page_size = getpagesize();
+      struct amdgpu_bo_alloc_request zreq = {
+         .alloc_size = align64(MAX2(page_size, ws->info.pte_fragment_size), page_size),
+         .phys_alignment = page_size,
+         .preferred_heap = AMDGPU_GEM_DOMAIN_VRAM,
+         .flags = AMDGPU_GEM_CREATE_VRAM_CLEARED | AMDGPU_GEM_CREATE_NO_CPU_ACCESS,
+      };
+
+      r = ac_drm_bo_alloc(ws->dev, &zreq, &ws->zero_bo);
+      if (r) {
+         fprintf(stderr, "radv/amdgpu: failed to allocate sparse zero backing BO.\n");
+         result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+         goto winsys_fail;
+      }
+
+      r = ac_drm_bo_export(ws->dev, ws->zero_bo, amdgpu_bo_handle_type_kms, &ws->zero_bo_handle);
+      if (r) {
+         fprintf(stderr, "radv/amdgpu: failed to export sparse zero backing BO.\n");
+         result = VK_ERROR_INITIALIZATION_FAILED;
+         goto winsys_fail;
+      }
+      ws->zero_bo_size = zreq.alloc_size;
    }
 
    /*
@@ -352,22 +393,6 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
    radv_amdgpu_bo_init_functions(ws);
    radv_amdgpu_cs_init_functions(ws);
 
-   /* Allocate a zero-filled page for residencyNonResidentStrict on GPUs without
-    * native PRT/sparse support.  Unmapped sparse pages will be mapped to this BO
-    * so that reads return zeros instead of garbage. */
-   if (!ws->info.has_sparse && (perftest_flags & RADV_PERFTEST_SPARSE)) {
-      struct amdgpu_bo_alloc_request zreq = {
-         .alloc_size = getpagesize(),
-         .phys_alignment = getpagesize(),
-         .preferred_heap = AMDGPU_GEM_DOMAIN_VRAM,
-         .flags = AMDGPU_GEM_CREATE_VRAM_CLEARED | AMDGPU_GEM_CREATE_NO_CPU_ACCESS,
-      };
-      if (!ac_drm_bo_alloc(ws->dev, &zreq, &ws->zero_bo)) {
-         ac_drm_bo_export(ws->dev, ws->zero_bo, amdgpu_bo_handle_type_kms,
-                          &ws->zero_bo_handle);
-      }
-   }
-
    _mesa_hash_table_insert(winsyses, (void *)ac_drm_device_get_cookie(dev), ws);
    simple_mtx_unlock(&winsys_creation_mutex);
 
@@ -376,6 +401,8 @@ radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
    return result;
 
 winsys_fail:
+   if (ws->zero_bo.abo)
+      ac_drm_bo_free(ws->dev, ws->zero_bo);
    free(ws);
 fail:
    if (winsyses && _mesa_hash_table_num_entries(winsyses) == 0) {

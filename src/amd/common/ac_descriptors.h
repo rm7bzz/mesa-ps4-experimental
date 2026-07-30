@@ -218,6 +218,7 @@ struct ac_sampler_state {
    unsigned min_filter : 2;
    unsigned mip_filter : 2;
    unsigned aniso_single_level : 1;
+   unsigned perf_mip : 4;
    unsigned border_color_type : 2;
    unsigned border_color_ptr : 12;
    float min_lod;
@@ -226,7 +227,7 @@ struct ac_sampler_state {
 };
 
 void
-ac_build_sampler_descriptor(const enum amd_gfx_level gfx_level,
+ac_build_sampler_descriptor(const struct radeon_info *info,
                             const struct ac_sampler_state *state,
                             uint32_t desc[4]);
 

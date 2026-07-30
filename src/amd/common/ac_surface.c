@@ -1435,26 +1435,20 @@ static int gfx6_compute_surface(struct ac_addrlib *addrlib, const struct radeon_
    case RADEON_SURF_MODE_1D:
       if (surf->flags & RADEON_SURF_PRT)
          AddrSurfInfoIn.tileMode = ADDR_TM_PRT_TILED_THIN1;
-      else if (config->is_3d &&
-               info->family != CHIP_LIVERPOOL && info->family != CHIP_GLADIUS)
+      else if (config->is_3d)
          AddrSurfInfoIn.tileMode = ADDR_TM_1D_TILED_THICK;
       else
          AddrSurfInfoIn.tileMode = ADDR_TM_1D_TILED_THIN1;
       break;
    case RADEON_SURF_MODE_2D:
       if (surf->flags & RADEON_SURF_PRT) {
-         if (config->is_3d && surf->bpe < 8 &&
-             info->family != CHIP_LIVERPOOL && info->family != CHIP_GLADIUS) {
+         if (config->is_3d && surf->bpe < 8) {
             AddrSurfInfoIn.tileMode = ADDR_TM_PRT_2D_TILED_THICK;
          } else {
             AddrSurfInfoIn.tileMode = ADDR_TM_PRT_TILED_THIN1;
          }
       } else {
-         /* Disable thick tiling for Liverpool/Gladius - it causes color corruption.
-          * These GPUs should use standard 2D thin tiling for 3D textures.
-          */
-         if (config->is_3d &&
-             info->family != CHIP_LIVERPOOL && info->family != CHIP_GLADIUS) {
+         if (config->is_3d) {
             /* Select the best tile mode that doesn't overallocate memory too much.
              * The tile modes below are sorted from best to worst performance.
              */

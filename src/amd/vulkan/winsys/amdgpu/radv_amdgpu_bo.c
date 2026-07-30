@@ -9,8 +9,8 @@
  * SPDX-License-Identifier: MIT
  */
 
-#include <stdio.h>
 #include <errno.h>
+#include <stdio.h>
 
 #include "radv_amdgpu_bo.h"
 #include "radv_debug.h"
@@ -138,18 +138,18 @@ radv_amdgpu_log_va_op(struct radv_amdgpu_winsys *ws, struct radv_amdgpu_winsys_b
 static int
 radv_amdgpu_virtual_bo_fill_zero(struct radv_amdgpu_winsys *ws, uint64_t va, uint64_t size)
 {
-   /* Map each page in the VA range to the global zero-filled page BO.
-    * This ensures reads from unmapped sparse pages return zeros
-    * (residencyNonResidentStrict) on GPUs without native PRT support. */
-   uint64_t page = getpagesize();
-   size = align64(size, page);
-   for (uint64_t off = 0; off < size; off += page) {
-      int r = radv_amdgpu_bo_va_op(ws, ws->zero_bo_handle, 0, page,
-                                    va + off, 0, 0, AMDGPU_VA_OP_MAP);
+   /* Repeatedly alias the zero-filled BO across the VA range. */
+   assert(ws->zero_bo_handle && ws->zero_bo_size);
+   const uint64_t page_size = getpagesize();
+
+   size = align64(size, page_size);
+   for (uint64_t off = 0; off < size; off += ws->zero_bo_size) {
+      const uint64_t map_size = MIN2(size - off, ws->zero_bo_size);
+      int r = radv_amdgpu_bo_va_op(ws, ws->zero_bo_handle, 0, map_size,
+                                   va + off, 0, 0, AMDGPU_VA_OP_MAP);
       if (r) {
-         /* MAP may fail if there's already an entry; try REPLACE */
-         r = radv_amdgpu_bo_va_op(ws, ws->zero_bo_handle, 0, page,
-                                   va + off, 0, 0, AMDGPU_VA_OP_REPLACE);
+         r = radv_amdgpu_bo_va_op(ws, ws->zero_bo_handle, 0, map_size,
+                                  va + off, 0, 0, AMDGPU_VA_OP_REPLACE);
          if (r)
             return r;
       }
@@ -161,13 +161,9 @@ static int
 radv_amdgpu_virtual_bo_init_mapping(struct radv_amdgpu_winsys *ws, struct radv_amdgpu_winsys_bo *bo, uint64_t size)
 {
    if (!ws->info.has_sparse) {
-      /* On GFX7 Liverpool (!has_sparse), map the entire VA range to the
-       * zero-filled page so unmapped reads return zeros.  REPLACE in
-       * virtual_bo_map will atomically swap individual tiles to real data.
-       */
-      if (ws->zero_bo_handle)
+      if (ws->zero_bo_handle && ws->zero_bo_size)
          return radv_amdgpu_virtual_bo_fill_zero(ws, bo->base.va, size);
-      return 0;
+      return -EINVAL;
    }
 
    return radv_amdgpu_bo_va_op(ws, 0, 0, size, bo->base.va, 0, AMDGPU_VM_PAGE_PRT, AMDGPU_VA_OP_MAP);
@@ -216,16 +212,13 @@ radv_amdgpu_virtual_bo_unmap(struct radv_amdgpu_winsys *ws, struct radv_amdgpu_w
    int r;
 
    if (ws->info.has_sparse) {
-      r = radv_amdgpu_bo_va_op(ws, 0, 0, size, parent->base.va + offset, 0, AMDGPU_VM_PAGE_PRT, AMDGPU_VA_OP_REPLACE);
+      r = radv_amdgpu_bo_va_op(ws, 0, 0, size, parent->base.va + offset, 0,
+                               AMDGPU_VM_PAGE_PRT, AMDGPU_VA_OP_REPLACE);
    } else if (ws->zero_bo_handle) {
-      /* Re-fill with the zero page so reads from unbound tiles return zeros
-       * (residencyNonResidentStrict).  REPLACE atomically swaps each tile's
-       * mapping back from the real backing BO to the zero-filled page. */
       r = radv_amdgpu_virtual_bo_fill_zero(ws, parent->base.va + offset, size);
    } else {
-      /* Fallback: CLEAR removes all entries in this sub-range from the
-       * kernel's VM interval tree. */
-      r = radv_amdgpu_bo_va_op(ws, 0, 0, size, parent->base.va + offset, 0, 0, AMDGPU_VA_OP_CLEAR);
+      r = radv_amdgpu_bo_va_op(ws, 0, 0, size, parent->base.va + offset, 0, 0,
+                               AMDGPU_VA_OP_CLEAR);
    }
 
    if (r)
@@ -446,6 +439,14 @@ radv_amdgpu_winsys_virtual_bo_create(struct radeon_winsys *_ws, uint64_t size, u
    if (r) {
       fprintf(stderr, "radv/amdgpu: Failed to reserve a PRT VA region (%d).\n", r);
       result = VK_ERROR_OUT_OF_DEVICE_MEMORY;
+      /* Zero-backed emulation maps the range in chunks. Remove any chunks
+       * installed before the failing ioctl so the freed VA cannot leave
+       * stale entries in the PS4 kernel's VM interval tree. */
+      if (!ws->info.has_sparse && ws->zero_bo_handle) {
+         int clear_r = radv_amdgpu_virtual_bo_clear_mapping(ws, bo);
+         if (clear_r)
+            fprintf(stderr, "radv/amdgpu: Failed to roll back sparse VA mappings (%d).\n", clear_r);
+      }
       goto error_ranges_alloc;
    }
 
@@ -586,7 +587,7 @@ radv_amdgpu_winsys_bo_create(struct radeon_winsys *_ws, uint64_t size, unsigned 
     * buffers to GTT preferentially. Retry with VRAM-only — on APUs all VRAM
     * is CPU-accessible anyway.
     */
-   if (r && !ws->info.has_dedicated_vram &&
+   if (r && (ws->info.family == CHIP_LIVERPOOL || ws->info.family == CHIP_GLADIUS) &&
        (request.preferred_heap & AMDGPU_GEM_DOMAIN_GTT) &&
        size > (uint64_t)ws->info.gart_size_kb * 1024) {
       request.preferred_heap = AMDGPU_GEM_DOMAIN_VRAM;
@@ -607,10 +608,10 @@ radv_amdgpu_winsys_bo_create(struct radeon_winsys *_ws, uint64_t size, unsigned 
    assert(!r);
 
    r = radv_amdgpu_bo_va_op(ws, kms_handle, 0, size, va, flags, 0, AMDGPU_VA_OP_MAP);
-   if (r && !ws->info.has_sparse) {
-      /* On GFX7 Liverpool (no PRT/sparse), stale entries in the kernel's VM
-       * interval tree can cause MAP to fail with -EINVAL.  Fall back to
-       * REPLACE which atomically removes any conflicting entry first.
+   if (r && (ws->info.family == CHIP_LIVERPOOL || ws->info.family == CHIP_GLADIUS)) {
+      /* A failed allocation or interrupted teardown can leave an overlapping
+       * entry in the PS4 kernel's VM interval tree. REPLACE atomically removes
+       * that conflicting bookkeeping entry before installing this mapping.
        */
       r = radv_amdgpu_bo_va_op(ws, kms_handle, 0, size, va, flags, 0, AMDGPU_VA_OP_REPLACE);
    }
@@ -626,7 +627,7 @@ radv_amdgpu_winsys_bo_create(struct radeon_winsys *_ws, uint64_t size, unsigned 
       const uint64_t pad_va = va + align64(size, 4096);
       r = radv_amdgpu_bo_va_op(ws, kms_handle, 0, 4096, pad_va, flags | RADEON_FLAG_READ_ONLY, 0,
                                AMDGPU_VA_OP_MAP);
-      if (r && !ws->info.has_sparse) {
+      if (r && (ws->info.family == CHIP_LIVERPOOL || ws->info.family == CHIP_GLADIUS)) {
          r = radv_amdgpu_bo_va_op(ws, kms_handle, 0, 4096, pad_va, flags | RADEON_FLAG_READ_ONLY, 0,
                                   AMDGPU_VA_OP_REPLACE);
       }
@@ -672,6 +673,8 @@ radv_amdgpu_winsys_bo_create(struct radeon_winsys *_ws, uint64_t size, unsigned 
    *out_bo = (struct radeon_winsys_bo *)bo;
    return VK_SUCCESS;
 error_va_map:
+   /* A padding-page MAP can fail after the main mapping succeeded. */
+   radv_amdgpu_bo_va_op(ws, 0, 0, va_size, va, 0, 0, AMDGPU_VA_OP_CLEAR);
    ac_drm_bo_free(ws->dev, buf_handle);
 
 error_bo_alloc:

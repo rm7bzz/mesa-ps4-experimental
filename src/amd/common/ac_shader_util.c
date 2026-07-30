@@ -514,7 +514,8 @@ is_fetch_size_safe(const enum amd_gfx_level gfx_level, const struct ac_vtx_forma
       return false;
 
    unsigned vertex_byte_size = vtx_info->chan_byte_size * channels;
-   return offset % vertex_byte_size == 0 && MAX2(alignment, 1) % vertex_byte_size == 0;
+   return (gfx_level >= GFX8 && gfx_level <= GFX9) ||
+          (offset % vertex_byte_size == 0 && MAX2(alignment, 1) % vertex_byte_size == 0);
 }
 
 /**

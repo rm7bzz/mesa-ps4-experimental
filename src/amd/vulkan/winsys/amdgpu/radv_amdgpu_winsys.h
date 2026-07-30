@@ -62,10 +62,12 @@ struct radv_amdgpu_winsys {
    uint32_t vm_timeline_syncobj;
    uint64_t vm_timeline_seq_num;
 
-   /* Zero-filled page BO for residencyNonResidentStrict on !has_sparse GPUs.
-    * Unmapped sparse pages are mapped to this BO so reads return zeros. */
+   /* Zero-filled backing BO for emulated nonresident reads on !has_sparse
+    * GPUs. Unmapped sparse pages are mapped to this BO. */
    ac_drm_bo zero_bo;
    uint32_t zero_bo_handle;
+   uint64_t zero_bo_size;
+   bool emulate_sparse;
 
    uint32_t refcount;
 };

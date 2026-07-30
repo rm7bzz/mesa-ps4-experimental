@@ -105,6 +105,26 @@ static const uint32_t sample_locs_16x[] = {
 };
 static const uint64_t centroid_priority_16x = 0xc97e64b231d0fa85ull;
 
+/* Exact defaults from the PS4 GNM driver's GfxContext::SetAASampleLocs. */
+static const uint32_t ps4_sample_locs_2x = 0x0000c44c;
+static const uint64_t ps4_centroid_priority_2x = 0x0000000000000010ull;
+static const uint32_t ps4_sample_locs_4x = 0x22eea66a;
+static const uint64_t ps4_centroid_priority_4x = 0x0000000000003210ull;
+static const uint32_t ps4_sample_locs_8x[] = {
+   0x5bb137d9,
+   0x1ff5739d,
+   0,
+   0,
+};
+static const uint64_t ps4_centroid_priority_8x = 0x7654321076543210ull;
+static const uint32_t ps4_sample_locs_16x[] = {
+   0x5bb137d9,
+   0x1ff5739d,
+   0x6e8224a8,
+   0x0ac640ec,
+};
+static const uint64_t ps4_centroid_priority_16x = 0xfedcba9876543210ull;
+
 /* distance from the pixel center, indexed by log2(nr_samples) */
 unsigned si_msaa_max_distance[5] = {
    0, /* no AA */
@@ -117,6 +137,8 @@ unsigned si_msaa_max_distance[5] = {
 static void si_get_sample_position(struct pipe_context *ctx, unsigned sample_count,
                                    unsigned sample_index, float *out_value)
 {
+   struct si_context *sctx = (struct si_context *)ctx;
+   bool is_ps4 = sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS;
    const uint32_t *sample_locs;
 
    switch (sample_count) {
@@ -125,16 +147,16 @@ static void si_get_sample_position(struct pipe_context *ctx, unsigned sample_cou
       sample_locs = &sample_locs_1x;
       break;
    case 2:
-      sample_locs = &sample_locs_2x;
+      sample_locs = is_ps4 ? &ps4_sample_locs_2x : &sample_locs_2x;
       break;
    case 4:
-      sample_locs = &sample_locs_4x;
+      sample_locs = is_ps4 ? &ps4_sample_locs_4x : &sample_locs_4x;
       break;
    case 8:
-      sample_locs = sample_locs_8x;
+      sample_locs = is_ps4 ? ps4_sample_locs_8x : sample_locs_8x;
       break;
    case 16:
-      sample_locs = sample_locs_16x;
+      sample_locs = is_ps4 ? ps4_sample_locs_16x : sample_locs_16x;
       break;
    }
 
@@ -254,6 +276,7 @@ static void si_emit_sample_locations(struct si_context *sctx, unsigned index)
 {
    struct radeon_cmdbuf *cs = &sctx->gfx_cs;
    struct si_state_rasterizer *rs = sctx->queued.named.rasterizer;
+   bool is_ps4 = sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS;
    unsigned nr_samples = sctx->framebuffer.nr_samples;
 
    /* Smoothing (only possible with nr_samples == 1) uses the same
@@ -277,16 +300,26 @@ static void si_emit_sample_locations(struct si_context *sctx, unsigned index)
          si_emit_max_4_sample_locs(sctx, centroid_priority_1x, sample_locs_1x, max_sample_dist);
          break;
       case 2:
-         si_emit_max_4_sample_locs(sctx, centroid_priority_2x, sample_locs_2x, max_sample_dist);
+         si_emit_max_4_sample_locs(sctx,
+                                   is_ps4 ? ps4_centroid_priority_2x : centroid_priority_2x,
+                                   is_ps4 ? ps4_sample_locs_2x : sample_locs_2x, max_sample_dist);
          break;
       case 4:
-         si_emit_max_4_sample_locs(sctx, centroid_priority_4x, sample_locs_4x, max_sample_dist);
+         si_emit_max_4_sample_locs(sctx,
+                                   is_ps4 ? ps4_centroid_priority_4x : centroid_priority_4x,
+                                   is_ps4 ? ps4_sample_locs_4x : sample_locs_4x, max_sample_dist);
          break;
       case 8:
-         si_emit_max_16_sample_locs(sctx, centroid_priority_8x, sample_locs_8x, 8, max_sample_dist);
+         si_emit_max_16_sample_locs(sctx,
+                                    is_ps4 ? ps4_centroid_priority_8x : centroid_priority_8x,
+                                    is_ps4 ? ps4_sample_locs_8x : sample_locs_8x, 8,
+                                    max_sample_dist);
          break;
       case 16:
-         si_emit_max_16_sample_locs(sctx, centroid_priority_16x, sample_locs_16x, 16, max_sample_dist);
+         si_emit_max_16_sample_locs(sctx,
+                                    is_ps4 ? ps4_centroid_priority_16x : centroid_priority_16x,
+                                    is_ps4 ? ps4_sample_locs_16x : sample_locs_16x, 16,
+                                    max_sample_dist);
          break;
       }
 

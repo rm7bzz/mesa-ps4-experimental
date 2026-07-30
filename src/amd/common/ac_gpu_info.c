@@ -944,10 +944,14 @@ void ac_fill_bug_info(struct radeon_info *info)
     * isn't used, i.e. only one compute job can run at a time.  If async
     * compute is possible, the threadgroup size must be limited to 256 threads
     * on all queues to avoid the bug.
-    * Only GFX6 and certain GFX7 chips are affected.
+    * Only GFX6 and certain GFX7 chips are affected. Liverpool and Gladius
+    * use the Bonaire compiler target, so conservatively assign the same Sea
+    * Islands erratum. The supplied GNM binaries do not prove this workaround.
     */
    info->has_cs_regalloc_hang_bug = info->gfx_level == GFX6 ||
                                     info->family == CHIP_BONAIRE ||
+                                    info->family == CHIP_LIVERPOOL ||
+                                    info->family == CHIP_GLADIUS ||
                                     info->family == CHIP_KABINI;
 
    /* HW bug workaround with async compute dispatches when threadgroup > 4096.
@@ -1369,6 +1373,15 @@ void ac_fill_tess_info(struct radeon_info *info)
    info->tess_offchip_ring_size = num_workgroups * max_hs_out_vram_dwords_per_wg * 4;
    info->tess_factor_ring_size = typical_tess_factor_size_per_wg * num_tess_factor_wg_per_cu *
                                  info->max_good_cu_per_sa * info->max_sa_per_se * info->max_se;
+
+   /* The PS4 GNM driver identifies 0x8000 as a 256 KiB tessellation-factor
+    * ring, and the Orbis kernel programs that value through privileged
+    * selector 0x2262. Allocate the full Sony ring; the PS4 kernel owns its
+    * nonstandard size selector.
+    */
+   if (info->family == CHIP_LIVERPOOL || info->family == CHIP_GLADIUS)
+      info->tess_factor_ring_size = 256 * 1024;
+
    info->total_tess_ring_size = info->tess_offchip_ring_size + info->tess_factor_ring_size;
 }
 

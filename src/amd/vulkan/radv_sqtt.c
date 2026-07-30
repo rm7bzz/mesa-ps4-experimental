@@ -39,7 +39,7 @@ radv_emit_wait_for_idle(const struct radv_device *device, struct radv_cmd_stream
    const struct radv_physical_device *pdev = radv_device_physical(device);
    enum rgp_flush_bits sqtt_flush_bits = 0;
    radv_cs_emit_cache_flush(
-      device->ws, cs, pdev->info.gfx_level, NULL, 0,
+      device->ws, cs, pdev->info.gfx_level, pdev->info.family, NULL, 0,
       (cs->hw_ip == AMD_IP_COMPUTE ? RADV_CMD_FLAG_CS_PARTIAL_FLUSH
                                    : (RADV_CMD_FLAG_CS_PARTIAL_FLUSH | RADV_CMD_FLAG_PS_PARTIAL_FLUSH)) |
          RADV_CMD_FLAG_INV_ICACHE | RADV_CMD_FLAG_INV_SCACHE | RADV_CMD_FLAG_INV_VCACHE | RADV_CMD_FLAG_INV_L2,

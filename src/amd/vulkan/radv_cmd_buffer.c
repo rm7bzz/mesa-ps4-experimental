@@ -9,7 +9,6 @@
  */
 
 #include "radv_cmd_buffer.h"
-#include "radv_queue.h"
 #include "meta/radv_meta.h"
 #include "ac_formats.h"
 #include "ac_shader_util.h"
@@ -1518,7 +1517,8 @@ radv_gang_cache_flush(struct radv_cmd_buffer *cmd_buffer)
    const uint32_t flush_bits = cmd_buffer->gang.flush_bits;
    enum rgp_flush_bits sqtt_flush_bits = 0;
 
-   radv_cs_emit_cache_flush(device->ws, ace_cs, pdev->info.gfx_level, NULL, 0, flush_bits, &sqtt_flush_bits, 0);
+   radv_cs_emit_cache_flush(device->ws, ace_cs, pdev->info.gfx_level, pdev->info.family, NULL, 0,
+                            flush_bits, &sqtt_flush_bits, 0);
 
    cmd_buffer->gang.flush_bits = 0;
 }
@@ -1709,13 +1709,15 @@ radv_cmd_buffer_after_draw(struct radv_cmd_buffer *cmd_buffer, enum radv_cmd_flu
       assert(flags & (RADV_CMD_FLAG_PS_PARTIAL_FLUSH | RADV_CMD_FLAG_CS_PARTIAL_FLUSH));
 
       /* Force wait for graphics or compute engines to be idle. */
-      radv_cs_emit_cache_flush(device->ws, cs, pdev->info.gfx_level, &cmd_buffer->gfx9_fence_idx,
-                               cmd_buffer->gfx9_fence_va, flags, &sqtt_flush_bits, cmd_buffer->gfx9_eop_bug_va);
+      radv_cs_emit_cache_flush(device->ws, cs, pdev->info.gfx_level, pdev->info.family,
+                               &cmd_buffer->gfx9_fence_idx, cmd_buffer->gfx9_fence_va, flags,
+                               &sqtt_flush_bits, cmd_buffer->gfx9_eop_bug_va);
 
       if ((flags & RADV_CMD_FLAG_PS_PARTIAL_FLUSH) && radv_cmdbuf_has_stage(cmd_buffer, MESA_SHADER_TASK)) {
          /* Force wait for compute engines to be idle on the internal cmdbuf. */
-         radv_cs_emit_cache_flush(device->ws, cmd_buffer->gang.cs, pdev->info.gfx_level, NULL, 0,
-                                  RADV_CMD_FLAG_CS_PARTIAL_FLUSH, &sqtt_flush_bits, 0);
+         radv_cs_emit_cache_flush(device->ws, cmd_buffer->gang.cs, pdev->info.gfx_level,
+                                  pdev->info.family, NULL, 0, RADV_CMD_FLAG_CS_PARTIAL_FLUSH,
+                                  &sqtt_flush_bits, 0);
       }
    }
 
@@ -2945,7 +2947,11 @@ radv_emit_hw_vs(struct radv_cmd_buffer *cmd_buffer, const struct radv_shader *sh
       radeon_opt_set_context_reg(R_028AB4_VGT_REUSE_OFF, AC_TRACKED_VGT_REUSE_OFF, shader->regs.vs.vgt_reuse_off);
 
    if (pdev->info.gfx_level >= GFX7) {
-      radeon_set_sh_reg_idx(&pdev->info, R_00B118_SPI_SHADER_PGM_RSRC3_VS, 3, shader->regs.vs.spi_shader_pgm_rsrc3_vs);
+      if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS)
+         radeon_set_sh_reg(R_00B118_SPI_SHADER_PGM_RSRC3_VS, shader->regs.vs.spi_shader_pgm_rsrc3_vs);
+      else
+         radeon_set_sh_reg_idx(&pdev->info, R_00B118_SPI_SHADER_PGM_RSRC3_VS, 3,
+                               shader->regs.vs.spi_shader_pgm_rsrc3_vs);
       radeon_set_sh_reg(R_00B11C_SPI_SHADER_LATE_ALLOC_VS, shader->regs.vs.spi_shader_late_alloc_vs);
 
       if (pdev->info.gfx_level >= GFX10) {
@@ -3357,7 +3363,11 @@ radv_emit_hw_gs(struct radv_cmd_buffer *cmd_buffer, const struct radv_shader *gs
    }
 
    if (pdev->info.gfx_level >= GFX7) {
-      radeon_set_sh_reg_idx(&pdev->info, R_00B21C_SPI_SHADER_PGM_RSRC3_GS, 3, gs->regs.spi_shader_pgm_rsrc3_gs);
+      if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS)
+         radeon_set_sh_reg(R_00B21C_SPI_SHADER_PGM_RSRC3_GS, gs->regs.spi_shader_pgm_rsrc3_gs);
+      else
+         radeon_set_sh_reg_idx(&pdev->info, R_00B21C_SPI_SHADER_PGM_RSRC3_GS, 3,
+                               gs->regs.spi_shader_pgm_rsrc3_gs);
    }
 
    if (pdev->info.gfx_level >= GFX10) {
@@ -3754,10 +3764,11 @@ radv_emit_vgt_shader_config_gfx6(struct radv_cmd_buffer *cmd_buffer, const struc
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_cmd_stream *cs = cmd_buffer->cs;
    uint32_t stages = 0;
+   const bool is_ps4 = pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS;
 
    if (key->tess) {
-      stages |=
-         S_028B54_LS_EN(V_028B54_LS_STAGE_ON) | S_028B54_HS_EN(1) | S_028B54_DYNAMIC_HS(pdev->info.gfx_level != GFX9);
+      stages |= S_028B54_LS_EN(V_028B54_LS_STAGE_ON) | S_028B54_HS_EN(1) |
+                S_028B54_DYNAMIC_HS(pdev->info.gfx_level != GFX9 && !is_ps4);
 
       if (key->gs)
          stages |= S_028B54_ES_EN(V_028B54_ES_STAGE_DS) | S_028B54_GS_EN(1);
@@ -4297,7 +4308,10 @@ radv_emit_vgt_prim_state(struct radv_cmd_buffer *cmd_buffer)
       if (pdev->info.gfx_level >= GFX12)
          vgt_prim |= S_030908_NUM_INPUT_CP(d->vk.ts.patch_control_points);
 
-      radeon_set_uconfig_reg_idx(&pdev->info, R_030908_VGT_PRIMITIVE_TYPE, 1, vgt_prim);
+      if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS)
+         radeon_set_uconfig_reg(R_030908_VGT_PRIMITIVE_TYPE, vgt_prim);
+      else
+         radeon_set_uconfig_reg_idx(&pdev->info, R_030908_VGT_PRIMITIVE_TYPE, 1, vgt_prim);
    } else {
       radeon_set_config_reg(R_008958_VGT_PRIMITIVE_TYPE, d->vk.ia.primitive_topology);
    }
@@ -4423,7 +4437,9 @@ radv_emit_ls_hs_config(struct radv_cmd_buffer *cmd_buffer)
                   S_028B58_HS_NUM_OUTPUT_CP(tcs->info.tcs.tcs_vertices_out);
 
    radeon_begin(cmd_buffer->cs);
-   if (pdev->info.gfx_level >= GFX7) {
+   if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS) {
+      radeon_set_context_reg(R_028B58_VGT_LS_HS_CONFIG, ls_hs_config);
+   } else if (pdev->info.gfx_level >= GFX7) {
       radeon_set_context_reg_idx(R_028B58_VGT_LS_HS_CONFIG, 2, ls_hs_config);
    } else {
       radeon_set_context_reg(R_028B58_VGT_LS_HS_CONFIG, ls_hs_config);
@@ -4461,6 +4477,16 @@ radv_emit_rast_samples_state(struct radv_cmd_buffer *cmd_buffer)
                        S_028A4C_SUPERTILE_WALK_ORDER_ENABLE(1) | S_028A4C_TILE_WALK_ORDER_ENABLE(1) |
                        S_028A4C_MULTI_SHADER_ENGINE_PRIM_DISCARD_ENABLE(1) | S_028A4C_FORCE_EOV_CNTDWN_ENABLE(1) |
                        S_028A4C_FORCE_EOV_REZ_ENABLE(1) | S_028A4C_WALK_ALIGN8_PRIM_FITS_ST(walk_align8);
+
+   if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS) {
+      /* Liverpool GNM initializes this to zero.  Neo uses 0x06020000.
+       * The recovered dynamic path only changes PS_ITER_SAMPLE. */
+      pa_sc_mode_cntl_1 = pdev->info.family == CHIP_GLADIUS
+                             ? S_028A4C_MULTI_SHADER_ENGINE_PRIM_DISCARD_ENABLE(1) |
+                                  S_028A4C_FORCE_EOV_CNTDWN_ENABLE(1) |
+                                  S_028A4C_FORCE_EOV_REZ_ENABLE(1)
+                             : 0;
+   }
 
    if (!d->sample_location.count || !d->vk.ms.sample_locations_enable)
       radv_emit_default_sample_locations(pdev, cmd_buffer->cs, rasterization_samples);
@@ -5956,6 +5982,12 @@ radv_instance_rate_prolog_index(unsigned num_attributes, uint32_t instance_rate_
    return start_index + offset_from_start_index + first;
 }
 
+static bool
+radv_vertex_fetch_misalignment_possible(enum amd_gfx_level gfx_level)
+{
+   return gfx_level <= GFX7 || gfx_level >= GFX10;
+}
+
 static struct radv_shader_part *
 lookup_vs_prolog(struct radv_cmd_buffer *cmd_buffer, const struct radv_shader *vs_shader, uint32_t *nontrivial_divisors)
 {
@@ -5974,7 +6006,7 @@ lookup_vs_prolog(struct radv_cmd_buffer *cmd_buffer, const struct radv_shader *v
    uint32_t misaligned_mask = d->vertex_input.vbo_misaligned_mask;
    uint32_t unaligned_mask = d->vertex_input.vbo_unaligned_mask;
    if (d->vertex_input.vbo_misaligned_mask_invalid) {
-      bool misalignment_possible = true;
+      bool misalignment_possible = radv_vertex_fetch_misalignment_possible(pdev->info.gfx_level);
       u_foreach_bit (index, d->vertex_input.vbo_misaligned_mask_invalid & attribute_mask) {
          uint8_t binding = d->vertex_input.bindings[index];
          if (!(cmd_buffer->state.vbo_bound_mask & BITFIELD_BIT(binding)))
@@ -7132,6 +7164,9 @@ radv_get_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_d
       primgroup_size = num_tess_patches;
    } else if (radv_cmdbuf_has_stage(cmd_buffer, MESA_SHADER_GEOMETRY)) {
       primgroup_size = 64;
+   } else if (gpu_info->family == CHIP_GLADIUS) {
+      /* Sony's Neo default context emits PRIMGROUP_SIZE=0xff. */
+      primgroup_size = 256;
    } else {
       primgroup_size = 128; /* recommended without a GS */
    }
@@ -7164,7 +7199,8 @@ radv_get_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_d
       /* WD_SWITCH_ON_EOP has no effect on GPUs with less than
        * 4 shader engines. Set 1 to pass the assertion below.
        * The other cases are hardware requirements. */
-      if (gpu_info->max_se < 4 || topology == V_008958_DI_PT_POLYGON || topology == V_008958_DI_PT_LINELOOP ||
+      if ((gpu_info->max_se < 4 && gpu_info->family != CHIP_LIVERPOOL) ||
+          topology == V_008958_DI_PT_POLYGON || topology == V_008958_DI_PT_LINELOOP ||
           topology == V_008958_DI_PT_TRIFAN || topology == V_008958_DI_PT_TRISTRIP_ADJ ||
           prim_restart_enable)
          wd_switch_on_eop = true;
@@ -7275,8 +7311,19 @@ radv_emit_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_
    if (state->last_ia_multi_vgt_param != ia_multi_vgt_param) {
       radeon_begin(cs);
 
-      if (gpu_info->gfx_level == GFX9) {
+      if (gpu_info->gfx_level == GFX9 || gpu_info->family == CHIP_LIVERPOOL) {
+         /*
+          * Liverpool uses Sony's GFX7 UCONFIG alias: SET_UCONFIG_REG,
+          * selector 0x258, index 4.
+          */
          radeon_set_uconfig_reg_idx(&pdev->info, R_030960_IA_MULTI_VGT_PARAM, 4, ia_multi_vgt_param);
+      } else if (gpu_info->family == CHIP_GLADIUS) {
+         /*
+          * Neo's bootstrap template uses context index 1, but GNM's
+          * draw-time setVgtControl packet writes the context register with
+          * index 0.  Preserve that default-vs-dynamic distinction.
+          */
+         radeon_set_context_reg(R_028AA8_IA_MULTI_VGT_PARAM, ia_multi_vgt_param);
       } else if (gpu_info->gfx_level >= GFX7) {
          radeon_set_context_reg_idx(R_028AA8_IA_MULTI_VGT_PARAM, 1, ia_multi_vgt_param);
       } else {
@@ -9507,7 +9554,7 @@ radv_CmdSetVertexInputEXT(VkCommandBuffer commandBuffer, uint32_t vertexBindingD
       if (state->vbo_bound_mask & BITFIELD_BIT(attrib->binding)) {
          uint32_t stride = binding->stride;
          uint64_t addr = cmd_buffer->vertex_bindings[attrib->binding].addr + vertex_input->offsets[loc];
-         if ((chip == GFX6 || chip >= GFX10) && ((stride | addr) & format_align_req_minus_1))
+         if (radv_vertex_fetch_misalignment_possible(chip) && ((stride | addr) & format_align_req_minus_1))
             vertex_input->vbo_misaligned_mask |= BITFIELD_BIT(loc);
          if ((stride | addr) & component_align_req_minus_1)
             vertex_input->vbo_unaligned_mask |= BITFIELD_BIT(loc);
@@ -15124,8 +15171,9 @@ radv_emit_cache_flush(struct radv_cmd_buffer *cmd_buffer)
       return;
    }
 
-   radv_cs_emit_cache_flush(device->ws, cs, pdev->info.gfx_level, &cmd_buffer->gfx9_fence_idx,
-                            cmd_buffer->gfx9_fence_va, cmd_buffer->state.flush_bits, &cmd_buffer->state.sqtt_flush_bits,
+   radv_cs_emit_cache_flush(device->ws, cs, pdev->info.gfx_level, pdev->info.family,
+                            &cmd_buffer->gfx9_fence_idx, cmd_buffer->gfx9_fence_va,
+                            cmd_buffer->state.flush_bits, &cmd_buffer->state.sqtt_flush_bits,
                             cmd_buffer->gfx9_eop_bug_va);
 
    if (radv_device_fault_detection_enabled(device))

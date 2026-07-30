@@ -235,6 +235,10 @@ radv_make_sampler_descriptor(const struct radv_device *device, const struct vk_s
       .mag_filter = radv_tex_filter(sampler_state->mag_filter, max_aniso),
       .min_filter = radv_tex_filter(sampler_state->min_filter, max_aniso),
       .mip_filter = radv_tex_mipfilter(sampler_state->mipmap_mode),
+      /* GNM leaves PERF_MIP at zero unless the application sets it explicitly. */
+      .perf_mip = pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS
+                     ? 0
+                     : (max_aniso_ratio ? max_aniso_ratio + 6 : 0),
       .min_lod = sampler_state->min_lod,
       .max_lod = sampler_state->max_lod,
       .lod_bias = sampler_state->mip_lod_bias,
@@ -243,7 +247,7 @@ radv_make_sampler_descriptor(const struct radv_device *device, const struct vk_s
       .border_color_ptr = border_color_ptr,
    };
 
-   ac_build_sampler_descriptor(pdev->info.gfx_level, &ac_state, desc);
+   ac_build_sampler_descriptor(&pdev->info, &ac_state, desc);
 }
 
 VkResult

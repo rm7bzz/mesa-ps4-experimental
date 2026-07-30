@@ -117,7 +117,7 @@ radv_choose_spi_color_format(const struct radv_device *device, VkFormat vk_forma
     * export formats produce incorrect (zero) results on GFX7 hardware.
     * Use 32-bit float exports instead and let the CB do the conversion.
     */
-   if (pdev->info.gfx_level <= GFX7 &&
+   if ((pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS) &&
        (ntype == V_028C70_NUMBER_UNORM || ntype == V_028C70_NUMBER_SNORM) &&
        (format == V_028C70_COLOR_16 || format == V_028C70_COLOR_16_16 ||
         format == V_028C70_COLOR_16_16_16_16)) {
@@ -462,6 +462,21 @@ radv_compute_ia_multi_vgt_param(const struct radv_device *device, struct radv_sh
    const struct radv_physical_device *pdev = radv_device_physical(device);
    struct radv_ia_multi_vgt_param_helpers ia_multi_vgt_param = {0};
 
+   /*
+    * The default context-state builders in libSceGnmDriverForNeoMode
+    * (FUN_00003280 and FUN_00004780) keep partial VS/ES waves and
+    * SWITCH_ON_EOI enabled on both PS4 GPU variants.  Liverpool's UCONFIG
+    * form also carries two PS4-specific high bits which public GFX7 headers
+    * do not name.
+    */
+   if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS) {
+      ia_multi_vgt_param.partial_vs_wave = true;
+      ia_multi_vgt_param.partial_es_wave = true;
+      ia_multi_vgt_param.ia_switch_on_eoi = true;
+   }
+   if (pdev->info.family == CHIP_LIVERPOOL)
+      ia_multi_vgt_param.base = 0x00600000;
+
    if (shaders[MESA_SHADER_TESS_CTRL]) {
       const struct radv_shader *tes = radv_get_shader(shaders, MESA_SHADER_TESS_EVAL);
 
@@ -509,7 +524,7 @@ radv_compute_ia_multi_vgt_param(const struct radv_device *device, struct radv_sh
       }
    }
 
-   ia_multi_vgt_param.base =
+   ia_multi_vgt_param.base |=
       /* The following field was moved to VGT_SHADER_STAGES_EN in GFX9. */
       S_028AA8_MAX_PRIMGRP_IN_WAVE(pdev->info.gfx_level == GFX8 ? 2 : 0) |
       S_030960_EN_INST_OPT_BASIC(pdev->info.gfx_level >= GFX9) | S_030960_EN_INST_OPT_ADV(pdev->info.gfx_level >= GFX9);

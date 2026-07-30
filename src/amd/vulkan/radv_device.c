@@ -980,6 +980,22 @@ static const uint32_t sample_locs_8x[] = {
 static const unsigned max_dist_8x = 7;
 static const uint64_t centroid_priority_8x = 0x7654321076543210ull;
 
+/* Liverpool and Gladius use the default locations programmed by
+ * GfxContext::SetAASampleLocs in the PS4 GNM driver.  These are not the
+ * standard DX/Vulkan locations above.
+ */
+static const uint32_t ps4_sample_locs_2x = 0x0000c44c;
+static const uint64_t ps4_centroid_priority_2x = 0x0000000000000010ull;
+static const uint32_t ps4_sample_locs_4x = 0x22eea66a;
+static const uint64_t ps4_centroid_priority_4x = 0x0000000000003210ull;
+static const uint32_t ps4_sample_locs_8x[] = {
+   0x5bb137d9,
+   0x1ff5739d,
+   0,
+   0,
+};
+static const uint64_t ps4_centroid_priority_8x = 0x7654321076543210ull;
+
 unsigned
 radv_get_default_max_sample_dist(int log_samples)
 {
@@ -995,6 +1011,7 @@ radv_get_default_max_sample_dist(int log_samples)
 void
 radv_emit_default_sample_locations(const struct radv_physical_device *pdev, struct radv_cmd_stream *cs, int nr_samples)
 {
+   const bool is_ps4 = pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS;
    uint64_t centroid_priority;
 
    radeon_begin(cs);
@@ -1010,29 +1027,37 @@ radv_emit_default_sample_locations(const struct radv_physical_device *pdev, stru
       radeon_set_context_reg(R_028C28_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y1_0, sample_locs_1x);
       break;
    case 2:
-      centroid_priority = centroid_priority_2x;
+      centroid_priority = is_ps4 ? ps4_centroid_priority_2x : centroid_priority_2x;
 
-      radeon_set_context_reg(R_028BF8_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y0_0, sample_locs_2x);
-      radeon_set_context_reg(R_028C08_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y0_0, sample_locs_2x);
-      radeon_set_context_reg(R_028C18_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y1_0, sample_locs_2x);
-      radeon_set_context_reg(R_028C28_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y1_0, sample_locs_2x);
+      radeon_set_context_reg(R_028BF8_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y0_0,
+                             is_ps4 ? ps4_sample_locs_2x : sample_locs_2x);
+      radeon_set_context_reg(R_028C08_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y0_0,
+                             is_ps4 ? ps4_sample_locs_2x : sample_locs_2x);
+      radeon_set_context_reg(R_028C18_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y1_0,
+                             is_ps4 ? ps4_sample_locs_2x : sample_locs_2x);
+      radeon_set_context_reg(R_028C28_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y1_0,
+                             is_ps4 ? ps4_sample_locs_2x : sample_locs_2x);
       break;
    case 4:
-      centroid_priority = centroid_priority_4x;
+      centroid_priority = is_ps4 ? ps4_centroid_priority_4x : centroid_priority_4x;
 
-      radeon_set_context_reg(R_028BF8_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y0_0, sample_locs_4x);
-      radeon_set_context_reg(R_028C08_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y0_0, sample_locs_4x);
-      radeon_set_context_reg(R_028C18_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y1_0, sample_locs_4x);
-      radeon_set_context_reg(R_028C28_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y1_0, sample_locs_4x);
+      radeon_set_context_reg(R_028BF8_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y0_0,
+                             is_ps4 ? ps4_sample_locs_4x : sample_locs_4x);
+      radeon_set_context_reg(R_028C08_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y0_0,
+                             is_ps4 ? ps4_sample_locs_4x : sample_locs_4x);
+      radeon_set_context_reg(R_028C18_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y1_0,
+                             is_ps4 ? ps4_sample_locs_4x : sample_locs_4x);
+      radeon_set_context_reg(R_028C28_PA_SC_AA_SAMPLE_LOCS_PIXEL_X1Y1_0,
+                             is_ps4 ? ps4_sample_locs_4x : sample_locs_4x);
       break;
    case 8:
-      centroid_priority = centroid_priority_8x;
+      centroid_priority = is_ps4 ? ps4_centroid_priority_8x : centroid_priority_8x;
 
       radeon_set_context_reg_seq(R_028BF8_PA_SC_AA_SAMPLE_LOCS_PIXEL_X0Y0_0, 14);
-      radeon_emit_array(sample_locs_8x, 4);
-      radeon_emit_array(sample_locs_8x, 4);
-      radeon_emit_array(sample_locs_8x, 4);
-      radeon_emit_array(sample_locs_8x, 2);
+      radeon_emit_array(is_ps4 ? ps4_sample_locs_8x : sample_locs_8x, 4);
+      radeon_emit_array(is_ps4 ? ps4_sample_locs_8x : sample_locs_8x, 4);
+      radeon_emit_array(is_ps4 ? ps4_sample_locs_8x : sample_locs_8x, 4);
+      radeon_emit_array(is_ps4 ? ps4_sample_locs_8x : sample_locs_8x, 2);
       break;
    }
 
@@ -1059,6 +1084,8 @@ radv_emit_default_sample_locations(const struct radv_physical_device *pdev, stru
 static void
 radv_get_sample_position(struct radv_device *device, unsigned sample_count, unsigned sample_index, float *out_value)
 {
+   const struct radv_physical_device *pdev = radv_device_physical(device);
+   const bool is_ps4 = pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS;
    const uint32_t *sample_locs;
 
    switch (sample_count) {
@@ -1067,13 +1094,13 @@ radv_get_sample_position(struct radv_device *device, unsigned sample_count, unsi
       sample_locs = &sample_locs_1x;
       break;
    case 2:
-      sample_locs = &sample_locs_2x;
+      sample_locs = is_ps4 ? &ps4_sample_locs_2x : &sample_locs_2x;
       break;
    case 4:
-      sample_locs = &sample_locs_4x;
+      sample_locs = is_ps4 ? &ps4_sample_locs_4x : &sample_locs_4x;
       break;
    case 8:
-      sample_locs = sample_locs_8x;
+      sample_locs = is_ps4 ? ps4_sample_locs_8x : sample_locs_8x;
       break;
    }
 

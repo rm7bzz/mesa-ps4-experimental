@@ -98,7 +98,8 @@ static bool si_update_shaders_shared_by_vertex_and_mesh_pipe(struct si_context *
       } else {
          vgt_stages |= S_028B54_LS_EN(V_028B54_LS_STAGE_ON) |
                        S_028B54_HS_EN(1) |
-                       S_028B54_DYNAMIC_HS(1) |
+                       S_028B54_DYNAMIC_HS(sctx->family != CHIP_LIVERPOOL &&
+                                           sctx->family != CHIP_GLADIUS) |
                        S_028B54_HS_W32_EN(GFX_VERSION >= GFX10 &&
                                           sctx->queued.named.hs->wave_size == 32);
       }
@@ -801,6 +802,17 @@ static unsigned si_get_init_multi_vgt_param(struct si_screen *sscreen, union si_
    bool partial_vs_wave = false;
    bool partial_es_wave = false;
 
+   /*
+    * Match the default multi-VGT state emitted by Sony's GNM driver.  The
+    * Liverpool UCONFIG form also contains two high bits without public GFX7
+    * field names.
+    */
+   if (sscreen->info.family == CHIP_LIVERPOOL || sscreen->info.family == CHIP_GLADIUS) {
+      ia_switch_on_eoi = true;
+      partial_vs_wave = true;
+      partial_es_wave = true;
+   }
+
    if (key->u.uses_tess) {
       /* SWITCH_ON_EOI must be set if PrimID is used. */
       if (key->u.tess_uses_prim_id)
@@ -834,7 +846,8 @@ static unsigned si_get_init_multi_vgt_param(struct si_screen *sscreen, union si_
        * 4 shader engines. Set 1 to pass the assertion below.
        * The other cases are hardware requirements.
        */
-      if (sscreen->info.max_se <= 2 || key->u.prim == MESA_PRIM_POLYGON ||
+      if ((sscreen->info.max_se <= 2 && sscreen->info.family != CHIP_LIVERPOOL) ||
+          key->u.prim == MESA_PRIM_POLYGON ||
           key->u.prim == MESA_PRIM_LINE_LOOP || key->u.prim == MESA_PRIM_TRIANGLE_FAN ||
           key->u.prim == MESA_PRIM_TRIANGLE_STRIP_ADJACENCY ||
           key->u.primitive_restart ||
@@ -893,7 +906,8 @@ static unsigned si_get_init_multi_vgt_param(struct si_screen *sscreen, union si_
    if (sscreen->info.gfx_level <= GFX8 && ia_switch_on_eoi)
       partial_es_wave = true;
 
-   return S_028AA8_SWITCH_ON_EOP(ia_switch_on_eop) | S_028AA8_SWITCH_ON_EOI(ia_switch_on_eoi) |
+   return (sscreen->info.family == CHIP_LIVERPOOL ? 0x00600000 : 0) |
+          S_028AA8_SWITCH_ON_EOP(ia_switch_on_eop) | S_028AA8_SWITCH_ON_EOI(ia_switch_on_eoi) |
           S_028AA8_PARTIAL_VS_WAVE_ON(partial_vs_wave) |
           S_028AA8_PARTIAL_ES_WAVE_ON(partial_es_wave) |
           S_028AA8_WD_SWITCH_ON_EOP(sscreen->info.gfx_level >= GFX7 ? wd_switch_on_eop : 0) |
@@ -991,6 +1005,9 @@ static unsigned si_get_ia_multi_vgt_param(struct si_context *sctx,
       primgroup_size = sctx->num_patches_per_workgroup;
    } else if (HAS_GS) {
       primgroup_size = 64; /* recommended with a GS */
+   } else if (sctx->family == CHIP_GLADIUS) {
+      /* Sony's Neo default context emits PRIMGROUP_SIZE=0xff. */
+      primgroup_size = 256;
    } else {
       primgroup_size = 128; /* recommended without a GS and tess */
    }
@@ -1213,14 +1230,25 @@ static void si_emit_ia_multi_vgt_param(struct si_context *sctx,
          (sctx, indirect, prim, instance_count, primitive_restart, min_vertex_count);
 
    radeon_begin(cs);
-   if (GFX_VERSION == GFX9) {
+   if (GFX_VERSION == GFX9 || sctx->family == CHIP_LIVERPOOL) {
       /* Workaround for SpecviewPerf13 Catia hang on GFX9. */
-      if (prim != sctx->last_prim)
+      if (GFX_VERSION == GFX9 && prim != sctx->last_prim)
          BITSET_CLEAR(sctx->tracked_regs.reg_saved_mask, AC_TRACKED_IA_MULTI_VGT_PARAM_UCONFIG);
 
+      /*
+       * Liverpool uses Sony's SET_UCONFIG_REG selector 0x258/index 4.
+       */
       radeon_opt_set_uconfig_reg_idx(R_030960_IA_MULTI_VGT_PARAM,
                                      AC_TRACKED_IA_MULTI_VGT_PARAM_UCONFIG,
                                      4, ia_multi_vgt_param);
+   } else if (sctx->family == CHIP_GLADIUS) {
+      /*
+       * Neo's bootstrap template uses context index 1, but GNM's
+       * draw-time setVgtControl packet writes the context register with
+       * index 0.  Preserve that default-vs-dynamic distinction.
+       */
+      radeon_opt_set_context_reg(R_028AA8_IA_MULTI_VGT_PARAM,
+                                 AC_TRACKED_IA_MULTI_VGT_PARAM, ia_multi_vgt_param);
    } else if (GFX_VERSION >= GFX7) {
       radeon_opt_set_context_reg_idx(R_028AA8_IA_MULTI_VGT_PARAM,
                                      AC_TRACKED_IA_MULTI_VGT_PARAM, 1, ia_multi_vgt_param);
@@ -1256,9 +1284,12 @@ static void si_emit_draw_registers(struct si_context *sctx,
 
       if (GFX_VERSION >= GFX10)
          radeon_set_uconfig_reg(R_030908_VGT_PRIMITIVE_TYPE, vgt_prim);
-      else if (GFX_VERSION >= GFX7)
-         radeon_set_uconfig_reg_idx(R_030908_VGT_PRIMITIVE_TYPE, 1, vgt_prim);
-      else
+      else if (GFX_VERSION >= GFX7) {
+         if (sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS)
+            radeon_set_uconfig_reg(R_030908_VGT_PRIMITIVE_TYPE, vgt_prim);
+         else
+            radeon_set_uconfig_reg_idx(R_030908_VGT_PRIMITIVE_TYPE, 1, vgt_prim);
+      } else
          radeon_set_config_reg(R_008958_VGT_PRIMITIVE_TYPE, vgt_prim);
 
       sctx->last_prim = prim;
@@ -1879,9 +1910,10 @@ static void ALWAYS_INLINE si_set_vb_descriptor(struct si_vertex_elements *velems
                                                uint32_t *desc) /* where to upload descriptors */
 {
    struct si_resource *buf = si_resource(vb->buffer.resource);
-   int64_t offset = (int64_t)((int)vb->buffer_offset) + velems->elem[index].src_offset;
+   uint64_t offset = (uint64_t)vb->buffer_offset + velems->elem[index].src_offset;
 
-   if (!buf || offset >= buf->b.b.width0) {
+   if (!buf || offset >= buf->b.b.width0 ||
+       velems->elem[index].format_size > buf->b.b.width0 - offset) {
       memset(desc, 0, 16);
       return;
    }
@@ -1889,12 +1921,14 @@ static void ALWAYS_INLINE si_set_vb_descriptor(struct si_vertex_elements *velems
    uint64_t va = buf->gpu_address + offset;
    unsigned stride = velems->elem[index].stride;
 
-   int64_t num_records = (int64_t)buf->b.b.width0 - offset;
+   uint64_t num_records = buf->b.b.width0 - offset;
    if (GFX_VERSION != GFX8 && stride) {
-      /* Round up by rounding down and adding 1 */
+      /* Count only complete elements.  In particular, don't let signed
+       * division of a short final element round toward zero and expose an
+       * invalid GFX6/7 vertex fetch as one valid record. */
       num_records = (num_records - velems->elem[index].format_size) / stride + 1;
    }
-   assert(num_records >= 0 && num_records <= UINT_MAX);
+   assert(num_records <= UINT_MAX);
 
    desc[0] = va;
    desc[1] = S_008F04_BASE_ADDRESS_HI(va >> 32) | S_008F04_STRIDE(stride);

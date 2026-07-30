@@ -714,7 +714,7 @@ radv_shader_spirv_to_nir(struct radv_device *device, struct radv_shader_stage *s
       .lower_lod_zero_width = true,
       .lower_invalid_implicit_lod = true,
       .lower_1d = pdev->info.gfx_level == GFX9,
-      .lower_txl_clamp = true,
+      .lower_txl_clamp = pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS,
       .optimize_txd = true,
       .lower_tg4_shadow_to_16bit = pdev->info.compiler_info.has_fma_mix,
    };
@@ -1718,9 +1718,23 @@ radv_precompute_registers_hw_vs(struct radv_device *device, struct radv_shader *
                          &cu_mask);
 
    if (pdev->info.gfx_level >= GFX7) {
-      regs->vs.spi_shader_pgm_rsrc3_vs =
-         ac_apply_cu_en(S_00B118_CU_EN(cu_mask) | S_00B118_WAVE_LIMIT(0x3F), C_00B118_CU_EN, 0, &pdev->info);
-      regs->vs.spi_shader_late_alloc_vs = S_00B11C_LIMIT(late_alloc_wave64);
+      if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS) {
+         const unsigned gnm_cu_en = pdev->info.family == CHIP_GLADIUS ? 0x1fd : 0xffff;
+         const unsigned gnm_wave_limit = pdev->info.family == CHIP_GLADIUS ? 0x17 : 0;
+
+         regs->vs.spi_shader_pgm_rsrc3_vs =
+            ac_apply_cu_en(S_00B118_CU_EN(gnm_cu_en) |
+                              S_00B118_WAVE_LIMIT(gnm_wave_limit),
+                           C_00B118_CU_EN, 0, &pdev->info);
+      } else {
+         regs->vs.spi_shader_pgm_rsrc3_vs =
+            ac_apply_cu_en(S_00B118_CU_EN(cu_mask) | S_00B118_WAVE_LIMIT(0x3F),
+                           C_00B118_CU_EN, 0, &pdev->info);
+      }
+      regs->vs.spi_shader_late_alloc_vs =
+         pdev->info.family == CHIP_GLADIUS ? S_00B11C_LIMIT(0x1c)
+         : pdev->info.family == CHIP_LIVERPOOL ? 0
+                                               : S_00B11C_LIMIT(late_alloc_wave64);
 
       if (pdev->info.gfx_level >= GFX10) {
          const uint32_t oversub_pc_lines = late_alloc_wave64 ? pdev->info.pc_lines / 4 : 0;
@@ -1781,8 +1795,19 @@ radv_precompute_registers_hw_gs(struct radv_device *device, const struct radv_sh
    const uint32_t gs_num_invocations = gs_info->gs.invocations;
    regs->gs.vgt_gs_instance_cnt = S_028B90_CNT(MIN2(gs_num_invocations, 127)) | S_028B90_ENABLE(gs_num_invocations > 0);
 
-   regs->spi_shader_pgm_rsrc3_gs =
-      ac_apply_cu_en(S_00B21C_CU_EN(0xffff) | S_00B21C_WAVE_LIMIT(0x3F), C_00B21C_CU_EN, 0, &pdev->info);
+   if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS) {
+      const unsigned gnm_cu_en = pdev->info.family == CHIP_GLADIUS ? 0x1ff : 0xffff;
+      const unsigned gnm_wave_limit = pdev->info.family == CHIP_GLADIUS ? 0x17 : 0;
+
+      regs->spi_shader_pgm_rsrc3_gs =
+         ac_apply_cu_en(S_00B21C_CU_EN(gnm_cu_en) |
+                           S_00B21C_WAVE_LIMIT(gnm_wave_limit),
+                        C_00B21C_CU_EN, 0, &pdev->info);
+   } else {
+      regs->spi_shader_pgm_rsrc3_gs =
+         ac_apply_cu_en(S_00B21C_CU_EN(0xffff) | S_00B21C_WAVE_LIMIT(0x3F),
+                        C_00B21C_CU_EN, 0, &pdev->info);
+   }
 
    if (pdev->info.gfx_level >= GFX10) {
       regs->spi_shader_pgm_rsrc4_gs =

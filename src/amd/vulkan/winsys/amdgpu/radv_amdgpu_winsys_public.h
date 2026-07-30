@@ -12,7 +12,7 @@
 #ifndef RADV_AMDGPU_WINSYS_PUBLIC_H
 #define RADV_AMDGPU_WINSYS_PUBLIC_H
 
-VkResult radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags, bool is_virtio,
-                                   struct radeon_winsys **winsys);
+VkResult radv_amdgpu_winsys_create(int fd, uint64_t debug_flags, uint64_t perftest_flags,
+                                   bool emulate_sparse, bool is_virtio, struct radeon_winsys **winsys);
 
 #endif /* RADV_AMDGPU_WINSYS_PUBLIC_H */

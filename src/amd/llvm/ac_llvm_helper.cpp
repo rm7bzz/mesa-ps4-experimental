@@ -100,7 +100,7 @@ LLVMModuleRef ac_create_module(LLVMTargetMachineRef tm, LLVMContextRef ctx)
 #if LLVM_VERSION_MAJOR >= 21
    unwrap(module)->setTargetTriple(TM->getTargetTriple());
 #else
-   unwrap(module)->setTargetTriple(llvm::Triple(TM->getTargetTriple().getTriple()));
+   unwrap(module)->setTargetTriple(TM->getTargetTriple().getTriple());
 #endif
    unwrap(module)->setDataLayout(TM->createDataLayout());
    return module;

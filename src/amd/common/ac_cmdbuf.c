@@ -241,6 +241,19 @@ gfx6_init_graphics_preamble_state(const struct ac_preamble_state *state,
                                   struct ac_pm4_state *pm4)
 {
    const struct radeon_info *info = pm4->info;
+   const bool is_ps4 = info->family == CHIP_LIVERPOOL || info->family == CHIP_GLADIUS;
+
+   if (info->family == CHIP_LIVERPOOL || info->family == CHIP_GLADIUS) {
+      /* GNM initializeDefaultHardwareState emits this full-range barrier
+       * immediately after CLEAR_STATE and before all explicit state writes. */
+      ac_pm4_cmd_add(pm4, PKT3(PKT3_ACQUIRE_MEM, 5, 0));
+      ac_pm4_cmd_add(pm4, 0x2ec47fc0);
+      ac_pm4_cmd_add(pm4, 0xffffffff);
+      ac_pm4_cmd_add(pm4, 0);
+      ac_pm4_cmd_add(pm4, 0);
+      ac_pm4_cmd_add(pm4, 0);
+      ac_pm4_cmd_add(pm4, 10);
+   }
 
    /* Graphics registers. */
    /* CLEAR_STATE doesn't restore these correctly. */
@@ -292,18 +305,62 @@ gfx6_init_graphics_preamble_state(const struct ac_preamble_state *state,
    }
 
    if (info->gfx_level >= GFX7) {
-      ac_pm4_set_reg_idx3(pm4, R_00B01C_SPI_SHADER_PGM_RSRC3_PS,
-                          ac_apply_cu_en(S_00B01C_CU_EN(0xffffffff) |
-                                         S_00B01C_WAVE_LIMIT_GFX7(0x3F),
-                                         C_00B01C_CU_EN, 0, info));
+      if (is_ps4) {
+         /* GNM's persistent GFX7 scheduling state is ASIC-specific.
+          * Liverpool leaves the wave limit at zero and enables all 16 CU
+          * positions.  Gladius limits shaders to 23 waves and excludes CU1
+          * from the VS/ES/LS stages.
+          */
+         const unsigned ps_gs_cu_en = info->family == CHIP_GLADIUS ? 0x1ff : 0xffff;
+         const unsigned vs_es_ls_cu_en = info->family == CHIP_GLADIUS ? 0x1fd : 0xffff;
+         const unsigned wave_limit = info->family == CHIP_GLADIUS ? 0x17 : 0;
+
+         ac_pm4_set_reg(pm4, R_00B01C_SPI_SHADER_PGM_RSRC3_PS,
+                        ac_apply_cu_en(S_00B01C_CU_EN(ps_gs_cu_en) |
+                                       S_00B01C_WAVE_LIMIT_GFX7(wave_limit),
+                                       C_00B01C_CU_EN, 0, info));
+         ac_pm4_set_reg(pm4, R_00B118_SPI_SHADER_PGM_RSRC3_VS,
+                        ac_apply_cu_en(S_00B118_CU_EN(vs_es_ls_cu_en) |
+                                       S_00B118_WAVE_LIMIT(wave_limit),
+                                       C_00B118_CU_EN, 0, info));
+         ac_pm4_set_reg(pm4, R_00B11C_SPI_SHADER_LATE_ALLOC_VS,
+                        S_00B11C_LIMIT(info->family == CHIP_GLADIUS ? 0x1c : 0));
+         ac_pm4_set_reg(pm4, R_00B21C_SPI_SHADER_PGM_RSRC3_GS,
+                        ac_apply_cu_en(S_00B21C_CU_EN(ps_gs_cu_en) |
+                                       S_00B21C_WAVE_LIMIT(wave_limit),
+                                       C_00B21C_CU_EN, 0, info));
+      } else {
+         ac_pm4_set_reg_idx3(pm4, R_00B01C_SPI_SHADER_PGM_RSRC3_PS,
+                             ac_apply_cu_en(S_00B01C_CU_EN(0xffffffff) |
+                                            S_00B01C_WAVE_LIMIT_GFX7(0x3F),
+                                            C_00B01C_CU_EN, 0, info));
+      }
    }
 
    if (info->gfx_level <= GFX8) {
       ac_emit_raster_config(info, pm4);
 
-      /* FIXME calculate these values somehow ??? */
-      ac_pm4_set_reg(pm4, R_028A54_VGT_GS_PER_ES, SI_GS_PER_ES);
-      ac_pm4_set_reg(pm4, R_028A58_VGT_ES_PER_GS, 0x40);
+      if (info->family == CHIP_GLADIUS) {
+         /* The Neo GNM default-state template emits context selectors 0xeb
+          * and 0xec as one consecutive packet.  These addresses are absent
+          * from the public GFX7 register database, so keep the proven
+          * addresses and values instead of assigning speculative names.
+          */
+         ac_pm4_set_reg(pm4, 0x0283ac, 0xff00ff00);
+         ac_pm4_set_reg(pm4, 0x0283b0, 0x0000ff00);
+      }
+
+      if (info->family == CHIP_LIVERPOOL || info->family == CHIP_GLADIUS) {
+         /* GNM initializeDefaultHardwareState emits this exact grouping
+          * triplet after CLEAR_STATE on Liverpool and Gladius. */
+         ac_pm4_set_reg(pm4, R_028A54_VGT_GS_PER_ES, 0x100);
+         ac_pm4_set_reg(pm4, R_028A58_VGT_ES_PER_GS, 0x100);
+         ac_pm4_set_reg(pm4, R_028A5C_VGT_GS_PER_VS, 0x4);
+      } else {
+         /* FIXME calculate these values somehow ??? */
+         ac_pm4_set_reg(pm4, R_028A54_VGT_GS_PER_ES, SI_GS_PER_ES);
+         ac_pm4_set_reg(pm4, R_028A58_VGT_ES_PER_GS, 0x40);
+      }
 
       /* These registers, when written, also overwrite the CLEAR_STATE
        * context, so we can't rely on CLEAR_STATE setting them.
@@ -326,11 +383,23 @@ gfx6_init_graphics_preamble_state(const struct ac_preamble_state *state,
 
    if (info->gfx_level >= GFX7 && info->gfx_level <= GFX8) {
       ac_pm4_set_reg(pm4, R_00B51C_SPI_SHADER_PGM_RSRC3_LS,
-                     ac_apply_cu_en(S_00B51C_CU_EN(0xffff) | S_00B51C_WAVE_LIMIT(0x3F),
+                     ac_apply_cu_en(S_00B51C_CU_EN(info->family == CHIP_GLADIUS ? 0x1fd : 0xffff) |
+                                       S_00B51C_WAVE_LIMIT(is_ps4
+                                                             ? (info->family == CHIP_GLADIUS ? 0x17 : 0)
+                                                             : 0x3F),
                                     C_00B51C_CU_EN, 0, info));
-      ac_pm4_set_reg(pm4, R_00B41C_SPI_SHADER_PGM_RSRC3_HS, S_00B41C_WAVE_LIMIT(0x3F));
+      /* GNM leaves Liverpool RSRC3_HS at zero.  The Neo legacy-state
+       * template instead writes WAVE_LIMIT=0x17.  setHsShader does not
+       * replace either value, so this remains live for tessellation draws.
+       */
+      ac_pm4_set_reg(pm4, R_00B41C_SPI_SHADER_PGM_RSRC3_HS,
+                     is_ps4 ? S_00B41C_WAVE_LIMIT(info->family == CHIP_GLADIUS ? 0x17 : 0)
+                            : S_00B41C_WAVE_LIMIT(0x3F));
       ac_pm4_set_reg(pm4, R_00B31C_SPI_SHADER_PGM_RSRC3_ES,
-                     ac_apply_cu_en(S_00B31C_CU_EN(0xffff) | S_00B31C_WAVE_LIMIT(0x3F),
+                     ac_apply_cu_en(S_00B31C_CU_EN(info->family == CHIP_GLADIUS ? 0x1fd : 0xffff) |
+                                       S_00B31C_WAVE_LIMIT(is_ps4
+                                                             ? (info->family == CHIP_GLADIUS ? 0x17 : 0)
+                                                             : 0x3F),
                                     C_00B31C_CU_EN, 0, info));
 
       /* If this is 0, Bonaire can hang even if GS isn't being used.
