@@ -1242,22 +1242,21 @@ static void si_emit_ia_multi_vgt_param(struct si_context *sctx,
          (sctx, indirect, prim, instance_count, primitive_restart, min_vertex_count);
 
    radeon_begin(cs);
-   if (GFX_VERSION == GFX9 || sctx->family == CHIP_LIVERPOOL) {
+   if (GFX_VERSION == GFX9) {
       /* Workaround for SpecviewPerf13 Catia hang on GFX9. */
       if (GFX_VERSION == GFX9 && prim != sctx->last_prim)
          BITSET_CLEAR(sctx->tracked_regs.reg_saved_mask, AC_TRACKED_IA_MULTI_VGT_PARAM_UCONFIG);
 
-      /*
-       * Liverpool uses Sony's SET_UCONFIG_REG selector 0x258/index 4.
-       */
       radeon_opt_set_uconfig_reg_idx(R_030960_IA_MULTI_VGT_PARAM,
                                      AC_TRACKED_IA_MULTI_VGT_PARAM_UCONFIG,
                                      4, ia_multi_vgt_param);
-   } else if (sctx->family == CHIP_GLADIUS) {
+   } else if (sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS) {
       /*
-       * Neo's bootstrap template uses context index 1, but GNM's
-       * draw-time setVgtControl packet writes the context register with
-       * index 0.  Preserve that default-vs-dynamic distinction.
+       * The PS4 bootstrap templates contain static Liverpool UCONFIG and
+       * Gladius indexed-context defaults.  GNM's draw-time setVgtControl
+       * path uses the unindexed context register on both ASICs.  Replaying
+       * Liverpool's privileged startup UCONFIG alias from a userspace draw
+       * stream raises a CP illegal-register fault.
        */
       radeon_opt_set_context_reg(R_028AA8_IA_MULTI_VGT_PARAM,
                                  AC_TRACKED_IA_MULTI_VGT_PARAM, ia_multi_vgt_param);

@@ -7311,17 +7311,15 @@ radv_emit_ia_multi_vgt_param(struct radv_cmd_buffer *cmd_buffer, bool instanced_
    if (state->last_ia_multi_vgt_param != ia_multi_vgt_param) {
       radeon_begin(cs);
 
-      if (gpu_info->gfx_level == GFX9 || gpu_info->family == CHIP_LIVERPOOL) {
-         /*
-          * Liverpool uses Sony's GFX7 UCONFIG alias: SET_UCONFIG_REG,
-          * selector 0x258, index 4.
-          */
+      if (gpu_info->gfx_level == GFX9) {
          radeon_set_uconfig_reg_idx(&pdev->info, R_030960_IA_MULTI_VGT_PARAM, 4, ia_multi_vgt_param);
-      } else if (gpu_info->family == CHIP_GLADIUS) {
+      } else if (gpu_info->family == CHIP_LIVERPOOL || gpu_info->family == CHIP_GLADIUS) {
          /*
-          * Neo's bootstrap template uses context index 1, but GNM's
-          * draw-time setVgtControl packet writes the context register with
-          * index 0.  Preserve that default-vs-dynamic distinction.
+          * The PS4 bootstrap templates contain static Liverpool UCONFIG and
+          * Gladius indexed-context defaults.  GNM's draw-time setVgtControl
+          * path uses the unindexed context register on both ASICs.  Replaying
+          * Liverpool's privileged startup UCONFIG alias from a userspace draw
+          * stream raises a CP illegal-register fault.
           */
          radeon_set_context_reg(R_028AA8_IA_MULTI_VGT_PARAM, ia_multi_vgt_param);
       } else if (gpu_info->gfx_level >= GFX7) {
