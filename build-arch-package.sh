@@ -6,7 +6,7 @@ set -euo pipefail
 readonly SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly OUTPUT_DIR="${MESA_PACKAGE_OUTPUT:-${SOURCE_DIR}/packages}"
 readonly ARCH_IMAGE="${MESA_ARCH_IMAGE:-docker.io/library/archlinux:base-devel}"
-readonly RELEASE_REPOSITORY="${MESA_GITHUB_REPOSITORY:-rm7bzz/mesa-ps4-experimental}"
+readonly RELEASE_REPOSITORY='rm7bzz/mesa-ps4-experimental'
 
 die()
 {
@@ -26,7 +26,6 @@ Environment overrides:
   MESA_CONTAINER_ENGINE    docker or podman executable
   MESA_ARCH_IMAGE          Arch container image
   MESA_PACKAGE_OUTPUT      package input/output directory
-  MESA_GITHUB_REPOSITORY   GitHub OWNER/REPO for releases
   MESA_RELEASE_TAG         explicit release tag override
 EOF
 }
