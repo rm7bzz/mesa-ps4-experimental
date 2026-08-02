@@ -864,9 +864,24 @@ static struct pipe_context *si_create_context(struct pipe_screen *screen, unsign
 
    if (sctx->gfx_level == GFX7) {
       /* Clear the NULL constant buffer, because loads should return zeros. */
-      uint32_t clear_value = 0;
-      si_cp_dma_clear_buffer(sctx, &sctx->gfx_cs, sctx->null_const_buf.buffer, 0,
-                             sctx->null_const_buf.buffer->width0, clear_value);
+      if (sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS) {
+         /*
+          * Liverpool stops in CP DMA on the immediate-source DMA_DATA
+          * clear used here.  GNM uses WRITE_DATA for inline memory writes,
+          * so initialize this fixed 16-byte driver buffer through that
+          * proven path instead.
+          */
+         const uint32_t clear_value[4] = {0};
+
+         si_cp_write_data(sctx, si_resource(sctx->null_const_buf.buffer), 0,
+                          sizeof(clear_value), V_371_MEMORY, V_371_MICRO_ENGINE,
+                          clear_value);
+      } else {
+         uint32_t clear_value = 0;
+
+         si_cp_dma_clear_buffer(sctx, &sctx->gfx_cs, sctx->null_const_buf.buffer, 0,
+                                sctx->null_const_buf.buffer->width0, clear_value);
+      }
       si_barrier_after_simple_buffer_op(sctx, 0, sctx->null_const_buf.buffer, NULL);
    }
 
