@@ -71,8 +71,13 @@ radv_cs_emit_cp_dma(struct radv_device *device, struct radv_cmd_stream *cs, bool
    if (flags & CP_DMA_RAW_WAIT)
       command |= S_506_RAW_WAIT(1);
 
-   /* GnmCompositor FUN_0000fb00 proves cache-policy 2 for PS4 DMA_DATA. */
-   if (is_ps4)
+   /*
+    * GnmCompositor FUN_0000fb00 proves cache-policy 2 for PS4
+    * memory-to-memory copies.  An inline DATA clear has no source-memory
+    * cache policy, and Liverpool repeatedly timed out when those fields
+    * were copied onto that packet form as control 0xc4004000.
+    */
+   if (is_ps4 && !(flags & CP_DMA_CLEAR))
       header |= (2u << 13) | (2u << 25);
 
    /* Src and dst flags. */

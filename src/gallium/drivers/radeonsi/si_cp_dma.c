@@ -62,11 +62,13 @@ static void si_emit_cp_dma(struct si_context *sctx, struct radeon_cmdbuf *cs, ui
       command |= S_506_RAW_WAIT(1);
 
    /*
-    * GnmCompositor cbInlineDmaData (FUN_0000fb00) unconditionally emits
-    * source and destination cache policy 2 (0x04004000).  Preserve that
-    * proven PS4 policy instead of using generic CIK's default LRU policy.
+    * GnmCompositor cbInlineDmaData (FUN_0000fb00) emits source and
+    * destination cache policy 2 (0x04004000) for a memory-to-memory copy.
+    * Those memory-cache fields are not applicable when SRC_SEL is inline
+    * DATA.  Liverpool repeatedly timed out on that invalid combination as
+    * control 0xc4004000, while the original policy-free clear completed.
     */
-   if (is_ps4)
+   if (is_ps4 && !(flags & CP_DMA_CLEAR))
       header |= (2u << 13) | (2u << 25);
 
    /* Src and dst flags. */
