@@ -3,6 +3,10 @@
 # Build this Mesa PS4 tree for native 64-bit Linux, 32-bit Linux, or both.
 # The 32-bit build needs a multilib compiler, LLVM, libdrm, and window-system
 # development packages for the target architecture.
+#
+# The package action is different: it builds in an Arch Linux container so
+# that the resulting packages do not accidentally link against host Ubuntu
+# libraries.
 
 set -euo pipefail
 
@@ -16,6 +20,8 @@ usage()
 {
    cat <<'EOF'
 Usage: ./build-ps4.sh [64|32|all] [build|install|clean]
+       ./build-ps4.sh package
+       ./build-ps4.sh all package
 
 Defaults:  all build
 
@@ -31,6 +37,9 @@ Useful environment overrides:
   PKG_CONFIG32          32-bit pkg-config executable
   PKG_CONFIG_LIBDIR_32  32-bit pkg-config search path
   PKG_CONFIG_PATH_32    Additional 32-bit pkg-config search path
+  MESA_CONTAINER_ENGINE docker or podman executable
+  MESA_ARCH_IMAGE       Arch container image
+  MESA_PACKAGE_OUTPUT   Output directory for Arch packages
 EOF
 }
 
@@ -164,8 +173,8 @@ clean_arch()
 
 main()
 {
-   local target="${1:-all}"
-   local action="${2:-build}"
+   local target
+   local action
    local pkg_config_libdir_32
    local native_pkg_config_libdir="${PKG_CONFIG_LIBDIR-}"
    local native_pkg_config_path="${PKG_CONFIG_PATH-}"
@@ -177,6 +186,15 @@ main()
       usage
       exit 2
    }
+
+   if [[ "${1:-}" == package ]]; then
+      [[ $# -eq 1 ]] || die "the package shorthand takes no second argument"
+      target=all
+      action=package
+   else
+      target="${1:-all}"
+      action="${2:-build}"
+   fi
 
    case "${target}" in
    64|32) arches=( "${target}" ) ;;
@@ -192,9 +210,18 @@ main()
    build|install)
       require_command meson
       require_command "${NINJA:-ninja}"
+      require_command pkg-config
+      require_command cmake
+      require_command glslangValidator
       ;;
    clean) ;;
-   *) die "unknown action '${action}' (expected build, install, or clean)" ;;
+   package)
+      [[ "${target}" == all ]] ||
+         die "Arch packaging always builds the paired 64-bit and 32-bit packages"
+      "${SOURCE_DIR}/build-arch-package.sh"
+      return
+      ;;
+   *) die "unknown action '${action}' (expected build, install, clean, or package)" ;;
    esac
 
    pkg_config_libdir_32="${PKG_CONFIG_LIBDIR_32:-$(default_pkg_config_libdir_32)}"

@@ -1,0 +1,144 @@
+# Maintainer: rm7bzz <50107276+rm7bzz@users.noreply.github.com>
+
+pkgbase=mesa-ps4-experimental
+pkgname=(mesa-ps4-experimental lib32-mesa-ps4-experimental)
+pkgver=26.1.0.ps4
+pkgrel=1
+epoch=1
+pkgdesc='Mesa radeonsi and RADV with Liverpool/Gladius support'
+arch=(x86_64)
+url='https://github.com/rm7bzz/mesa-ps4-experimental'
+license=('MIT AND BSD-3-Clause AND SGI-B-2.0')
+options=(!lto !debug)
+makedepends=(
+  clang cmake elfutils glslang meson ninja pkgconf
+  python-mako python-packaging python-ply python-pycparser python-yaml
+  wayland-protocols xorgproto
+  expat libdisplay-info libdrm libglvnd libx11 libxcb libxext
+  libxrandr libxshmfence libxxf86vm llvm llvm-libs lm_sensors
+  spirv-tools systemd-libs vulkan-icd-loader wayland xcb-util-keysyms
+  zlib zstd
+  lib32-clang lib32-expat lib32-gcc-libs lib32-glibc
+  lib32-libdisplay-info lib32-libdrm lib32-libelf lib32-libglvnd
+  lib32-libx11 lib32-libxcb lib32-libxext lib32-libxrandr
+  lib32-libxshmfence lib32-libxxf86vm lib32-llvm lib32-llvm-libs
+  lib32-lm_sensors lib32-spirv-tools lib32-systemd
+  lib32-vulkan-icd-loader lib32-wayland lib32-xcb-util-keysyms
+  lib32-zlib lib32-zstd
+)
+source=(mesa-ps4-experimental.tar)
+sha256sums=(SKIP)
+
+pkgver() {
+  local version revision_count revision_hash
+
+  version="$(<"${srcdir}/mesa/VERSION")"
+  revision_count="$(<"${srcdir}/mesa/.ps4-revision-count")"
+  revision_hash="$(<"${srcdir}/mesa/.ps4-revision-hash")"
+  printf '%s.ps4.r%s.g%s' "${version}" "${revision_count}" "${revision_hash}"
+}
+
+prepare() {
+  cat >"${srcdir}/cross-i686-linux.ini" <<'EOF'
+[binaries]
+c = 'gcc'
+cpp = 'g++'
+ar = 'gcc-ar'
+strip = 'strip'
+llvm-config = '/usr/bin/llvm-config32'
+pkg-config = 'pkg-config'
+
+[host_machine]
+system = 'linux'
+cpu_family = 'x86'
+cpu = 'i686'
+endian = 'little'
+
+[properties]
+needs_exe_wrapper = false
+
+[built-in options]
+c_args = ['-m32']
+c_link_args = ['-m32']
+cpp_args = ['-m32']
+cpp_link_args = ['-m32']
+EOF
+}
+
+build() {
+  local -a meson_options=(
+    -Dbuildtype=release
+    -Db_lto=false
+    -Dgallium-drivers=radeonsi
+    -Dvulkan-drivers=amd
+    -Dplatforms=x11,wayland
+    -Dglx=dri
+    -Degl=enabled
+    -Dgbm=enabled
+    -Dllvm=enabled
+    -Dshared-llvm=enabled
+    -Dgallium-va=disabled
+    -Dgallium-rusticl=false
+    -Dvulkan-layers=
+    -Dvulkan-manifest-per-architecture=false
+    -Dvalgrind=disabled
+    -Dlibunwind=disabled
+    -Dbuild-tests=false
+    --prefix=/usr
+  )
+
+  meson setup "${srcdir}/build-64" "${srcdir}/mesa" \
+    "${meson_options[@]}" --libdir=lib
+  meson compile -C "${srcdir}/build-64"
+
+  PKG_CONFIG_LIBDIR=/usr/lib32/pkgconfig:/usr/share/pkgconfig \
+    meson setup "${srcdir}/build-32" "${srcdir}/mesa" \
+      "${meson_options[@]}" --libdir=lib32 \
+      --cross-file="${srcdir}/cross-i686-linux.ini"
+  meson compile -C "${srcdir}/build-32"
+}
+
+package_mesa-ps4-experimental() {
+  depends=(
+    expat glibc libdisplay-info libdrm libelf libgcc libglvnd libstdc++
+    libx11 libxcb libxext
+    libxrandr libxshmfence libxxf86vm llvm-libs lm_sensors
+    spirv-tools systemd-libs vulkan-icd-loader wayland xcb-util-keysyms
+    zlib zstd
+  )
+  provides=("mesa=${epoch}:${pkgver}-${pkgrel}"
+            "vulkan-radeon=${epoch}:${pkgver}-${pkgrel}"
+            opengl-driver vulkan-driver
+            "mesa-libgl=${epoch}:${pkgver}-${pkgrel}")
+  conflicts=(mesa vulkan-radeon)
+
+  meson install -C "${srcdir}/build-64" --destdir "${pkgdir}" --no-rebuild
+  install -Dm644 "${srcdir}/mesa/docs/license.rst" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/license.rst"
+}
+
+package_lib32-mesa-ps4-experimental() {
+  depends=(
+    "mesa-ps4-experimental=${epoch}:${pkgver}-${pkgrel}"
+    lib32-expat lib32-gcc-libs lib32-glibc lib32-libdisplay-info
+    lib32-libdrm lib32-libelf lib32-libglvnd lib32-libx11 lib32-libxcb
+    lib32-libxext lib32-libxrandr lib32-libxshmfence lib32-libxxf86vm
+    lib32-llvm-libs lib32-lm_sensors lib32-spirv-tools lib32-systemd
+    lib32-vulkan-icd-loader lib32-wayland lib32-xcb-util-keysyms
+    lib32-zlib lib32-zstd
+  )
+  provides=("lib32-mesa=${epoch}:${pkgver}-${pkgrel}"
+            "lib32-vulkan-radeon=${epoch}:${pkgver}-${pkgrel}"
+            lib32-opengl-driver lib32-vulkan-driver
+            "lib32-mesa-libgl=${epoch}:${pkgver}-${pkgrel}")
+  conflicts=(lib32-mesa lib32-vulkan-radeon)
+
+  meson install -C "${srcdir}/build-32" --destdir "${pkgdir}" --no-rebuild
+
+  # Headers, tools, architecture-neutral data, and the shared Vulkan ICD
+  # manifest belong to the native package. Keep only multilib payloads here.
+  rm -rf "${pkgdir}/etc" "${pkgdir}/usr/bin" "${pkgdir}/usr/include" \
+    "${pkgdir}/usr/share"
+  install -Dm644 "${srcdir}/mesa/docs/license.rst" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/license.rst"
+}
