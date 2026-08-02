@@ -11,13 +11,37 @@ readonly PACKAGE_ROOT="${BUILD_ROOT}/package"
 
 enable_multilib()
 {
-   sed -i \
-      '/^#\[multilib\]$/,/^#Include = \/etc\/pacman.d\/mirrorlist$/s/^#//' \
-      /etc/pacman.conf
-   grep -qx '\[multilib\]' /etc/pacman.conf || {
-      printf 'Unable to enable the Arch multilib repository\n' >&2
-      exit 1
+   local pacman_conf="${PACMAN_CONF:-/etc/pacman.conf}"
+
+   has_multilib_source()
+   {
+      awk '
+         /^[[:space:]]*\[[^]]+\][[:space:]]*$/ {
+            in_multilib = ($0 ~ /^[[:space:]]*\[multilib\][[:space:]]*$/)
+         }
+         in_multilib && /^[[:space:]]*(Include|Server)[[:space:]]*=/ {
+            found = 1
+         }
+         END { exit(found ? 0 : 1) }
+      ' "${pacman_conf}"
    }
+
+   if ! grep -Eq '^[[:space:]]*\[multilib\][[:space:]]*$' "${pacman_conf}"; then
+      # Some Arch container images omit the disabled repository template
+      # entirely, so do not depend on uncommenting a particular file layout.
+      printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>"${pacman_conf}"
+   elif ! has_multilib_source; then
+      sed -i \
+         '/^[[:space:]]*\[multilib\][[:space:]]*$/a Include = /etc/pacman.d/mirrorlist' \
+         "${pacman_conf}"
+   fi
+
+   if ! grep -Eq '^[[:space:]]*\[multilib\][[:space:]]*$' "${pacman_conf}" ||
+      ! has_multilib_source; then
+      printf 'Unable to enable the Arch multilib repository; relevant pacman.conf lines:\n' >&2
+      grep -nE 'multilib|Include|Server' "${pacman_conf}" >&2 || true
+      exit 1
+   fi
 }
 
 install_dependencies()
