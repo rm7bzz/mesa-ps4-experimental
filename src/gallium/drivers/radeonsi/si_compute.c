@@ -941,7 +941,8 @@ static void si_launch_grid(struct pipe_context *ctx, const struct pipe_grid_info
    }
 
    /* Prefetch the compute shader to L2. */
-   if (sctx->gfx_level >= GFX7 && sctx->screen->info.has_cp_dma && prefetch)
+   if (sctx->gfx_level >= GFX7 && sctx->screen->info.has_cp_dma && prefetch &&
+       sctx->family != CHIP_LIVERPOOL && sctx->family != CHIP_GLADIUS)
       si_cp_dma_prefetch(&sctx->gfx_cs, sctx->gfx_level, &program->shader.bo->b.b,
                          0, program->shader.bo->b.b.width0);
 

@@ -36,6 +36,7 @@ static inline unsigned cp_dma_max_byte_count(struct si_context *sctx)
 static void si_emit_cp_dma(struct si_context *sctx, struct radeon_cmdbuf *cs, uint64_t dst_va,
                            uint64_t src_va, unsigned size, unsigned flags)
 {
+   const bool is_ps4 = sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS;
    uint32_t header = 0, command = 0;
 
    assert(sctx->screen->info.has_cp_dma);
@@ -59,6 +60,14 @@ static void si_emit_cp_dma(struct si_context *sctx, struct radeon_cmdbuf *cs, ui
 
    if (flags & CP_DMA_RAW_WAIT)
       command |= S_506_RAW_WAIT(1);
+
+   /*
+    * GnmCompositor cbInlineDmaData (FUN_0000fb00) unconditionally emits
+    * source and destination cache policy 2 (0x04004000).  Preserve that
+    * proven PS4 policy instead of using generic CIK's default LRU policy.
+    */
+   if (is_ps4)
+      header |= (2u << 13) | (2u << 25);
 
    /* Src and dst flags. */
    /* GFX12: TC_L2 means MALL, which should always be set. */

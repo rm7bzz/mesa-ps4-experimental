@@ -49,6 +49,7 @@ radv_cs_emit_cp_dma(struct radv_device *device, struct radv_cmd_stream *cs, bool
                     uint64_t src_va, unsigned size, unsigned flags)
 {
    const struct radv_physical_device *pdev = radv_device_physical(device);
+   const bool is_ps4 = pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS;
    const bool cp_dma_use_L2 = (flags & CP_DMA_USE_L2) && pdev->info.cp_dma_use_L2;
    const bool cp_dma_use_mall = pdev->info.gfx_level == GFX12;
    /* GFX12: TC_L2 means MALL, which should always be set. */
@@ -69,6 +70,10 @@ radv_cs_emit_cp_dma(struct radv_device *device, struct radv_cmd_stream *cs, bool
 
    if (flags & CP_DMA_RAW_WAIT)
       command |= S_506_RAW_WAIT(1);
+
+   /* GnmCompositor FUN_0000fb00 proves cache-policy 2 for PS4 DMA_DATA. */
+   if (is_ps4)
+      header |= (2u << 13) | (2u << 25);
 
    /* Src and dst flags. */
    if (cp_dma_tc_l2_flag)
@@ -154,6 +159,10 @@ radv_cs_cp_dma_prefetch(const struct radv_device *device, struct radv_cmd_stream
    struct radeon_winsys *ws = device->ws;
    enum amd_gfx_level gfx_level = pdev->info.gfx_level;
    uint32_t header = 0, command = 0;
+
+   /* The recovered GNM paths do not use the GFX7 L2 self-copy prefetch. */
+   if (pdev->info.family == CHIP_LIVERPOOL || pdev->info.family == CHIP_GLADIUS)
+      return;
 
    if (gfx_level >= GFX11)
       size = MIN2(size, 32768 - SI_CPDMA_ALIGNMENT);

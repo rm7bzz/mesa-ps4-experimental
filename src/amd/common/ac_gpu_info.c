@@ -1146,7 +1146,17 @@ void ac_fill_hw_info(struct radeon_info *info, const struct drm_amdgpu_info_devi
                                !util_is_power_of_two_or_zero(info->num_tcc_blocks) &&
                                info->num_rb != info->num_tcc_blocks;
    info->cp_sdma_ge_use_system_memory_scope = info->gfx_level == GFX12;
-   info->cp_dma_use_L2 = info->gfx_level >= GFX7 && !info->cp_sdma_ge_use_system_memory_scope;
+   /*
+    * Liverpool/Gladius support DMA_DATA, but the recovered GNM command
+    * builder uses ordinary memory transfers with bypass cache policies.  It
+    * never selects the generic GFX7 L2 source/destination path.  Keep CP DMA
+    * available for copies and clears, but don't advertise the unsupported
+    * L2 form to either radeonsi or RADV.
+    */
+   info->cp_dma_use_L2 = info->gfx_level >= GFX7 &&
+                         info->family != CHIP_LIVERPOOL &&
+                         info->family != CHIP_GLADIUS &&
+                         !info->cp_sdma_ge_use_system_memory_scope;
 
    info->sqc_inst_cache_size = device_info->sqc_inst_cache_size * 1024;
    info->sqc_scalar_cache_size = device_info->sqc_data_cache_size * 1024;

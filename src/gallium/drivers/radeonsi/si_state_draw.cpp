@@ -729,6 +729,18 @@ static void si_prefetch_shaders(struct si_context *sctx)
    if (GFX_VERSION < GFX7 || !mask)
       return;
 
+   /*
+    * The recovered PS4 GNM paths use DMA_DATA for real copies, but never the
+    * generic GFX7 self-copy-to-L2 prefetch form.  A Liverpool timeout caught
+    * the CP frontend after two such prefetches and the following CP_SYNC,
+    * while VM, shaders, raster, CB and DB were idle.  Fetch shaders normally
+    * on PS4 and clear the deferred mask so it isn't retried every draw.
+    */
+   if (sctx->family == CHIP_LIVERPOOL || sctx->family == CHIP_GLADIUS) {
+      sctx->prefetch_L2_mask = 0;
+      return;
+   }
+
    /* Prefetch shaders and VBO descriptors into L2. */
    if (GFX_VERSION >= GFX11) {
       if (HAS_TESS && mask & SI_PREFETCH_HS)
@@ -2118,8 +2130,9 @@ static bool si_upload_and_prefetch_VB_descriptors(struct si_context *sctx,
                                    RADEON_USAGE_READ | RADEON_PRIO_DESCRIPTORS);
          vb_descriptors_address = si_resource(upload_buf)->gpu_address + offset;
 
-         /* GFX6 doesn't support the L2 prefetch. */
-         if (GFX_VERSION >= GFX7)
+         /* PS4 GNM doesn't use the generic self-copy-to-L2 prefetch. */
+         if (GFX_VERSION >= GFX7 && sctx->family != CHIP_LIVERPOOL &&
+             sctx->family != CHIP_GLADIUS)
             si_cp_dma_prefetch_inline<GFX_VERSION>(&sctx->gfx_cs, vb_descriptors_address, alloc_size);
       }
 
