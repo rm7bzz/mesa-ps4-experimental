@@ -8,6 +8,7 @@ readonly HOST_GID="${HOST_GID:?HOST_GID was not provided}"
 readonly BUILD_ROOT=/build/mesa-ps4-package
 readonly ARCHIVE_ROOT="${BUILD_ROOT}/archive"
 readonly PACKAGE_ROOT="${BUILD_ROOT}/package"
+readonly ARTIFACT_ROOT="${PACKAGE_ROOT}/artifacts"
 
 enable_multilib()
 {
@@ -64,6 +65,10 @@ install_dependencies()
       lib32-zlib lib32-zstd
    )
 
+   # The minimal container does not necessarily have a local master key yet.
+   # archlinux-keyring's upgrade hook needs it to rebuild/sign the trust DB.
+   pacman-key --init
+   pacman-key --populate archlinux
    pacman -Syu --needed --noconfirm "${packages[@]}"
 }
 
@@ -93,7 +98,7 @@ create_builder()
    fi
    useradd -o -m -u "${build_uid}" -g "${group_name}" builder
    install -d -o builder -g "${group_name}" "${BUILD_ROOT}" "${ARCHIVE_ROOT}" \
-      "${PACKAGE_ROOT}"
+      "${PACKAGE_ROOT}" "${ARTIFACT_ROOT}"
 }
 
 prepare_source_archive()
@@ -123,14 +128,37 @@ prepare_source_archive()
 
 build_packages()
 {
+   local artifact
+   local out_gid
+   local out_uid
+   local -a artifacts
+
    runuser -u builder -- /bin/bash -euo pipefail -c '
       cd "$1"
-      export PKGDEST=/out
+      export PKGDEST="$2"
       export SRCDEST="$1/sources"
       export BUILDDIR="$1/work"
       makepkg --clean --cleanbuild --force --noconfirm
-   ' _ "${PACKAGE_ROOT}"
-   chown -R "${HOST_UID}:${HOST_GID}" /out
+   ' _ "${PACKAGE_ROOT}" "${ARTIFACT_ROOT}"
+
+   # Rootless Podman maps the host owner of /out to container UID 0. Building
+   # directly into that mount as the makepkg user therefore fails. Stage in
+   # the container, then copy as container root while preserving the mount's
+   # effective owner for both rootless Podman and Docker.
+   mapfile -d '' artifacts < <(
+      find "${ARTIFACT_ROOT}" -maxdepth 1 -type f -name '*.pkg.tar.zst' -print0
+   )
+   (( ${#artifacts[@]} > 0 )) || {
+      printf 'makepkg completed without producing a .pkg.tar.zst artifact\n' >&2
+      exit 1
+   }
+
+   out_uid="$(stat -c %u /out)"
+   out_gid="$(stat -c %g /out)"
+   for artifact in "${artifacts[@]}"; do
+      install -o "${out_uid}" -g "${out_gid}" -m 0644 "${artifact}" /out/
+      printf 'Exported %s\n' "/out/$(basename "${artifact}")"
+   done
 }
 
 main()
